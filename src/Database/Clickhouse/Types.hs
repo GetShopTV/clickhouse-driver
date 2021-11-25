@@ -32,36 +32,31 @@ class ToClickhouse a where
 type Field = (ByteString, Either Text ClickhouseType)
 
 data ClickhouseType
-  = CKInt8 !Int8
-  | CKInt16 !Int16
-  | CKInt32 !Int32
-  | CKInt64 !Int64
-  | CKInt128 !Int128
-
-  | CKUInt8 !Word8
-  | CKUInt16 !Word16
-  | CKUInt32 !Word32
-  | CKUInt64 !Word64
-  | CKUInt128 !Word128
-
-  | CKString !ByteString
-  | CKTuple !(Vector ClickhouseType)
-  | CKArray !(Vector ClickhouseType)
-
-  | CKDecimal !Float
-  | CKDecimal32 !Float
-  | CKDecimal64 !Double
-  | CKDecimal128 !Double
-
-  | CKFloat32 !Float
-  | CKFloat64 !Double
-
-  | CKIPv4 !Word32
-  | CKIPv6 !Word32 !Word32 !Word32 !Word32
-  | CKDate Day
-  | CKDateTime UTCTime
-  | CKUUID UUID
-  | CKNull
+  = ClickInt8 !Int8
+  | ClickInt16 !Int16
+  | ClickInt32 !Int32
+  | ClickInt64 !Int64
+  | ClickInt128 !Int128
+  | ClickUInt8 !Word8
+  | ClickUInt16 !Word16
+  | ClickUInt32 !Word32
+  | ClickUInt64 !Word64
+  | ClickUInt128 !Word128
+  | ClickString !ByteString
+  | ClickTuple !(Vector ClickhouseType)
+  | ClickArray !(Vector ClickhouseType)
+  | ClickDecimal !Float
+  | ClickDecimal32 !Float
+  | ClickDecimal64 !Double
+  | ClickDecimal128 !Double
+  | ClickFloat32 !Float
+  | ClickFloat64 !Double
+  | ClickIPv4 !Word32
+  | ClickIPv6 !Word32 !Word32 !Word32 !Word32
+  | ClickDate Day
+  | ClickDateTime UTCTime
+  | ClickUUID UUID
+  | ClickNull
   deriving (Show, Eq)
 
 data ClickhouseSettings = ClickhouseSettings

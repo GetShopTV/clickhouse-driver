@@ -31,37 +31,31 @@ toMultipleStr list       = BS.intercalate ", " (toBS <$> V.toList list)
 
 toBS :: ClickhouseType -> ByteString
 toBS = \case
-  (CKInt32  n  )  -> showBS n
-  (CKString str)  -> (quoted . escape) str
-  (CKArray  arr)  -> squareBrackets (toMultipleStr arr)
-  (CKTuple  arr)  -> roundBrackets (toMultipleStr arr)
-  (CKFloat32 a)   -> showBS a
-  (CKFloat64 a)   -> showBS a
-
-  (CKInt8 a)      -> showBS a
-  (CKInt16 a)     -> showBS a
-  (CKInt64 a)     -> showBS a
-  (CKInt128 a)    -> showBS a
-
-  (CKUInt8 a)     -> showBS a
-  (CKUInt16 a)    -> showBS a
-  (CKUInt32 a)    -> showBS a
-  (CKUInt64 a)    -> showBS a
-  (CKUInt128 a)   -> showBS a
-
-  CKDecimal a     -> showBS a
-  CKDecimal32 a   -> showBS a
-  CKDecimal64 a   -> showBS a
-  CKDecimal128 a  -> showBS a
-
-  CKIPv4 a        -> showBS $ toIPv4w a
-  CKIPv6 a b c d  -> showBS $ toIPv6w (a, b, c, d)
-
-  CKDateTime time -> quoted . cs $ formatTime defaultTimeLocale "%0Y-%m-%d %H:%M:%S" time
-  CKDate day      -> quoted . cs $ formatTime defaultTimeLocale "%0Y-%m-%d" day
-  CKUUID uuid     -> quoted . cs $ UUID.toString uuid
-  CKNull          -> "null"
-
+  ClickInt32  n  -> showBS n
+  ClickString str-> (quoted . escape) str
+  ClickArray  arr-> squareBrackets (toMultipleStr arr)
+  ClickTuple  arr-> roundBrackets (toMultipleStr arr)
+  ClickFloat32 a -> showBS a
+  ClickFloat64 a -> showBS a
+  ClickInt8 a    -> showBS a
+  ClickInt16 a   -> showBS a
+  ClickInt64 a   -> showBS a
+  ClickInt128 a  -> showBS a
+  ClickUInt8 a   -> showBS a
+  ClickUInt16 a  -> showBS a
+  ClickUInt32 a  -> showBS a
+  ClickUInt64 a  -> showBS a
+  ClickUInt128 a -> showBS a
+  ClickDecimal a     -> showBS a
+  ClickDecimal32 a   -> showBS a
+  ClickDecimal64 a   -> showBS a
+  ClickDecimal128 a  -> showBS a
+  ClickIPv4 a        -> showBS $ toIPv4w a
+  ClickIPv6 a b c d  -> showBS $ toIPv6w (a, b, c, d)
+  ClickDateTime time -> quoted . cs $ formatTime defaultTimeLocale "%0Y-%m-%d %H:%M:%S" time
+  ClickDate day      -> quoted . cs $ formatTime defaultTimeLocale "%0Y-%m-%d" day
+  ClickUUID uuid     -> quoted . cs $ UUID.toString uuid
+  ClickNull          -> "null"
 
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) =>  ClickhouseSettings -> ByteString -> m ByteString
 mkClickHouseRequest ch@ClickhouseSettings { scheme, username, host, port , password} query = do
