@@ -8,6 +8,7 @@
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE TypeSynonymInstances  #-}
 
+
 module Database.Clickhouse.Types where
 
 import           Data.ByteString.Char8
@@ -24,7 +25,6 @@ import           Data.Word
 import           GHC.Generics
 import           GHC.TypeLits
 import           Network.HTTP.Req
-import           Network.TunedHTTP
 
 class ToClickhouse a where
   toClick :: a -> Either Text ClickhouseType
@@ -37,14 +37,17 @@ data ClickhouseType
   | CKInt32 !Int32
   | CKInt64 !Int64
   | CKInt128 !Int128
+
   | CKUInt8 !Word8
   | CKUInt16 !Word16
   | CKUInt32 !Word32
   | CKUInt64 !Word64
   | CKUInt128 !Word128
+
   | CKString !ByteString
   | CKTuple !(Vector ClickhouseType)
   | CKArray !(Vector ClickhouseType)
+
   | CKDecimal !Float
   | CKDecimal32 !Float
   | CKDecimal64 !Double
@@ -52,6 +55,7 @@ data ClickhouseType
 
   | CKFloat32 !Float
   | CKFloat64 !Double
+
   | CKIPv4 !Word32
   | CKIPv6 !Word32 !Word32 !Word32 !Word32
   | CKDate Day

@@ -1,7 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-{-# LANGUAGE OverloadedStrings   #-}
-
+{-# LANGUAGE TupleSections #-}
 module Database.Clickhouse.Client where
 
 import           Database.Clickhouse.Generic
@@ -25,8 +24,6 @@ import qualified Data.Vector               as V
 import           Data.Word
 import           GHC.TypeLits
 import           Network.HTTP.Req          as R
-import           Network.TunedHTTP
-import           Text.URI
 import           Data.List.NonEmpty (NonEmpty (..), toList, fromList)
 
 toMultipleStr :: Vector ClickhouseType -> ByteString
@@ -65,11 +62,6 @@ toBS = \case
   CKUUID uuid     -> quoted . cs $ UUID.toString uuid
   CKNull          -> "null"
 
-
-prepareClickhouseURI scheme host port =  mkURIBs $ proto <> host <> ":" <> (cs . show) port
-  where proto = case scheme of
-              Https ->   "https://"
-              Http  ->   "http://"
 
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) =>  ClickhouseSettings -> ByteString -> m ByteString
 mkClickHouseRequest ch@ClickhouseSettings { scheme, username, host, port , password} query = do
@@ -150,27 +142,3 @@ escape = BS.intercalate "\'" . BS.split ('\'')
 
 showBS :: (Show s) => s -> ByteString
 showBS = (cs . show)
--- fetchClickHouseResponse
---   :: Katip.LogEnv -- ^ Logger.
---   -> HTTP.Manager -- ^ Clickhouse HTTP manager.
---   -> ClickHouseSettings -- ^ Current clickhouse settings.
---   -> ClickHouseQueryText -- ^ Query text.
---   -> IO HttpClientResponse
--- fetchClickHouseResponse logEnv man ch query = do
---   req <- mkClickHouseRequest ch query
---   resp <- fetchDefaultHttpResponse "ClickHouse" logEnv man req
---   case resp of
---     HttpClientException (ErrorText textWithPass) -> do
---       return . HttpClientException . ErrorText $ Text.replace (Text.dropEnd 3 $ clickHousePassword ch) "***" textWithPass
---     another -> return another
-
--- fetchClickHouseResponseWithFallback
---   :: Katip.LogEnv -- ^ Logger.
---   -> HTTP.Manager -- ^ ClickHouse HTTP manager.
---   -> ClickHouseSettings -- ^ Primary clickhouse settings.
---   -> ClickHouseSettings -- ^ Secondary clickhouse settings.
---   -> ClickHouseQueryText -- ^ Query text.
---   -> IO HttpClientResponse
--- fetchClickHouseResponseWithFallback logEnv manager ch sch query = runHttpClient
---   (fetchClickHouseResponse logEnv manager ch query
---     `catch` \(SomeException _ex) -> fetchClickHouseResponse logEnv manager sch query)
