@@ -26,6 +26,7 @@ library
   exposed-modules:
       Database.Clickhouse.Client
       Database.Clickhouse.Generic
+      Database.Clickhouse.Render
       Database.Clickhouse.Types
   other-modules:
       Paths_clickhouse_driver
@@ -52,6 +53,7 @@ library
       PolyKinds
   build-depends:
       base >=4.7 && <5
+    , binary
     , bytestring
     , data-default
     , data-dword
@@ -75,6 +77,7 @@ test-suite clickhouse-driver-test
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
+    , binary
     , bytestring
     , clickhouse-driver
     , data-default

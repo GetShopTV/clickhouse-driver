@@ -1,30 +1,26 @@
-{-# LANGUAGE AllowAmbiguousTypes   #-}
-{-# LANGUAGE DefaultSignatures     #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE TypeSynonymInstances  #-}
-
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Database.Clickhouse.Types where
 
-import           Data.ByteString.Char8
-import           Data.Default
-import           Data.DoubleWord
-import           Data.Int
-import           Data.Proxy
-import           Data.String.Conversions
-import           Data.Text
-import           Data.Time
-import           Data.UUID
-import           Data.Vector
-import           Data.Word
-import           GHC.Generics
-import           GHC.TypeLits
-import           Network.HTTP.Req
+import Data.ByteString.Char8
+import Data.Default
+import Data.DoubleWord
+import Data.Int
+import Data.Proxy
+import Data.String.Conversions
+import Data.Text
+import Data.Time
+import Data.UUID
+import Data.Vector
+import Data.Word
+import GHC.Generics
+import GHC.TypeLits
+import Network.HTTP.Req
 
 class ToClickhouse a where
   toClick :: a -> Either Text ClickhouseType
@@ -60,19 +56,26 @@ data ClickhouseType
   deriving (Show, Eq)
 
 data ClickhouseSettings = ClickhouseSettings
-  { scheme   :: !Scheme
-  , username :: !Text
-  , host     :: !Text
-  , port     :: !Int
-  , password :: !Text
+  { scheme :: !Scheme,
+    username :: !Text,
+    host :: !Text,
+    port :: !Int,
+    password :: !Text
   }
-  deriving Generic
+  deriving (Generic)
+
+data ClickhouseEnv = ClickhouseEnv
+  { settings :: !ClickhouseSettings,
+    dbScheme :: !Text
+  }
+  deriving (Generic)
 
 instance Default ClickhouseSettings where
-  def = ClickhouseSettings  { scheme = Http
-                            , username     = "default"
-                            , host         = "localhost"
-                            , port         = 8123
-                            , password     = ""
-                            }
-
+  def =
+    ClickhouseSettings
+      { scheme = Http,
+        username = "default",
+        host = "localhost",
+        port = 8123,
+        password = ""
+      }

@@ -32,6 +32,8 @@ dependencies:
 - req
 - iproute
 - exceptions
+- binary
+
 library:
   source-dirs: src
   default-extensions:
