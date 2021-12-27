@@ -1,16 +1,20 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 
 module Database.Clickhouse.Types where
 
+import Control.Monad.Reader
 import Data.ByteString.Char8
+import qualified Data.ByteString.Lazy as BSL
+import Data.Csv
 import Data.Default
 import Data.DoubleWord
 import Data.Int
+import Data.Kind
 import Data.Proxy
 import Data.String.Conversions
 import Data.Text
@@ -22,11 +26,17 @@ import GHC.Generics
 import GHC.TypeLits
 import Network.HTTP.Req
 
+newtype Query = Query BSL.ByteString
+
+runQuery :: Query -> ByteString
+runQuery (Query bs) = BSL.toStrict bs
+
 class ToClickhouse a where
   toClick :: a -> Either Text ClickhouseType
 
 type Field = (ByteString, Either Text ClickhouseType)
 
+-- | Supported clickhouse types
 data ClickhouseType
   = ClickInt8 !Int8
   | ClickInt16 !Int16
@@ -55,27 +65,12 @@ data ClickhouseType
   | ClickNull
   deriving (Show, Eq)
 
-data ClickhouseSettings = ClickhouseSettings
-  { scheme :: !Scheme,
-    username :: !Text,
-    host :: !Text,
-    port :: !Int,
-    password :: !Text
-  }
-  deriving (Generic)
+-- | Class of clickhouse clients. Currently only HTTP/HTTPS client available
+type ClickhouseClient :: Type -> Constraint
+class ClickhouseClient client where
+  type ClickhouseClientEnv client :: *
 
-data ClickhouseEnv = ClickhouseEnv
-  { settings :: !ClickhouseSettings,
-    dbScheme :: !Text
-  }
-  deriving (Generic)
+  type ClientConnectionConstraints client (m :: Type -> Type) :: Constraint
+  type ClientConnectionConstraints client m = ()
 
-instance Default ClickhouseSettings where
-  def =
-    ClickhouseSettings
-      { scheme = Http,
-        username = "default",
-        host = "localhost",
-        port = 8123,
-        password = ""
-      }
+  send :: (ClientConnectionConstraints client m) => ClickhouseClientEnv client -> Query -> m ByteString

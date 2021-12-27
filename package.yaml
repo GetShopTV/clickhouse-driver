@@ -33,6 +33,11 @@ dependencies:
 - iproute
 - exceptions
 - binary
+- mtl
+- cassava
+- tz
+- replace-attoparsec
+- attoparsec
 
 library:
   source-dirs: src

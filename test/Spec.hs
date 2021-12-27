@@ -3,6 +3,7 @@
 import           Data.Text                      ( Text )
 import Data.Int (Int64)
 import Database.Clickhouse.Types
+import Database.Clickhouse.Generic
 import Data.String.Conversions (cs)
 
 instance (ToClickhouse a) => ToClickhouse (Maybe a) where

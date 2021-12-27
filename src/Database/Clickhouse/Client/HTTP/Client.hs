@@ -1,34 +1,48 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TupleSections #-}
 
-module Database.Clickhouse.Client where
+module Database.Clickhouse.Client.HTTP.Client where
 
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as BS
-import Data.Coerce
 import Data.DoubleWord
 import Data.Either
+import Data.Kind
 import Data.List.NonEmpty (NonEmpty (..), fromList, toList)
-import Data.Proxy
 import Data.String.Conversions (cs)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.UUID as UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word
+import Database.Clickhouse.Client.HTTP.Types
+import Database.Clickhouse.Conversion.Bytestring.To
+import Database.Clickhouse.Conversion.Types
+import Database.Clickhouse.Conversion.Values.Renderer
 import Database.Clickhouse.Generic
-import Database.Clickhouse.Render
 import Database.Clickhouse.Types
-import GHC.TypeLits
 import Network.HTTP.Req as R
+
+type ClientHTTP :: Type
+data ClientHTTP
+
+instance ClickhouseClient ClientHTTP where
+  type ClickhouseClientEnv ClientHTTP = ClickhouseEnv
+  type ClientConnectionConstraints ClientHTTP m = (MonadHttp m, MonadThrow m)
+  send env query = do
+    let queryBS = runQuery query
+    mkClickHouseRequest env queryBS
 
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseEnv -> ByteString -> m ByteString
 mkClickHouseRequest connection query = do
   let body = ReqBodyBs query
+  -- FIXME: Remove deubg reporting
   liftIO $ BS.putStrLn "\n"
   liftIO $ BS.putStrLn query
   liftIO $ BS.putStrLn "\n"
@@ -55,8 +69,14 @@ chDefaultHeaders connection@ClickhouseEnv {..} =
   where
     ClickhouseSettings {..} = settings
 
-execute :: (MonadHttp m, MonadThrow m) => ClickhouseEnv -> Query -> [ClickhouseType] -> m ByteString
-execute connection query params = mkClickHouseRequest connection (runQuery $ renderParams query params)
+executePrepared ::
+  (MonadHttp m, MonadThrow m) =>
+  ClickhouseEnv ->
+  PreparedQuery ->
+  [ClickhouseType] ->
+  m ByteString
+executePrepared connection query params =
+  mkClickHouseRequest connection (runQuery $ renderPrepared query params)
 
 -- insertMany
 

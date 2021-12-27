@@ -1,45 +1,31 @@
-module Database.Clickhouse.Render where
+module Database.Clickhouse.Conversion.Bytestring.To where
 
-import Control.Exception (Exception)
-import Control.Exception.Base (throw)
-import Data.Binary.Put (putByteString, putLazyByteString, runPut)
+import Data.Attoparsec.ByteString.Char8 as AB
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.ByteString.Lazy.Char8 as LC
-import Data.Data (Typeable)
+import qualified Data.ByteString.Char8 as BSC
+import Data.Char
+import Data.Csv
+import Data.Foldable
 import Data.IP
-import Data.Int
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Data.String.Conversions (cs)
-import Data.Time (defaultTimeLocale, formatTime)
+import Data.String.Conversions
+import Data.Time
 import qualified Data.UUID as UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Database.Clickhouse.Types (ClickhouseType (..))
+import Database.Clickhouse.Conversion.Types
+import Database.Clickhouse.Types
+import Replace.Attoparsec.ByteString
 
-newtype Query = Query BSL.ByteString
+instance FromClickhouseType ByteString where
+  fromClickhouseType = toBS
 
-runQuery :: Query -> ByteString
-runQuery (Query bs) = BSL.toStrict bs
-
-renderParams :: Query -> [ClickhouseType] -> Query
-renderParams (Query qry) params =
-  let fragments = LC.split '?' qry
-   in Query . runPut $ merge fragments params
-  where
-    merge [x] [] = putLazyByteString x
-    merge (x : xs) (y : ys) = putLazyByteString x >> putByteString (toBS y) >> merge xs ys
-    merge _ _ = throw WrongParamsCount
-
-data WrongParamsCount = WrongParamsCount deriving (Show, Typeable)
-
-instance Exception WrongParamsCount
 
 toBS :: ClickhouseType -> ByteString
 toBS = \case
   ClickInt32 n -> showBS n
-  ClickString str -> (quoted . escape) str
+  ClickString str -> (quoted . escapeField) str
   ClickArray arr -> squareBrackets (toMultipleStr arr)
   ClickTuple arr -> roundBrackets (toMultipleStr arr)
   ClickFloat32 a -> showBS a
@@ -64,11 +50,14 @@ toBS = \case
   ClickUUID uuid -> quoted . cs $ UUID.toString uuid
   ClickNull -> "null"
 
+showBS :: (Show s) => s -> ByteString
+showBS = cs . show
+
 toMultipleStr :: Vector ClickhouseType -> ByteString
-toMultipleStr list = BS.intercalate ", " (toBS <$> V.toList list)
+toMultipleStr list = BSC.intercalate ", " (toBS <$> V.toList list)
 
 toClickList :: [ByteString] -> ByteString
-toClickList l = "(" <> BS.intercalate ", " l <> ")"
+toClickList l = "(" <> BSC.intercalate ", " l <> ")"
 
 toValues :: [ClickhouseType] -> ByteString
 toValues l = toClickList (toBS <$> l)
@@ -89,8 +78,12 @@ roundBrackets str = "(" <> str <> ")"
 quoted :: ByteString -> ByteString
 quoted str = "'" <> str <> "'"
 
-escape :: ByteString -> ByteString
-escape = BS.intercalate "\'" . BS.split '\''
+{- escapeField :: ByteString -> ByteString
+escapeField = BSC.intercalate "\'" . BSC.split '\''
+ -}
 
-showBS :: (Show s) => s -> ByteString
-showBS = cs . show
+escapeField :: ByteString -> ByteString
+escapeField = streamEdit escapeableChars escaper
+  where
+    escapeableChars = asum [char '\\', char '\'']
+    escaper ch = BS.pack ['\\', ch]
