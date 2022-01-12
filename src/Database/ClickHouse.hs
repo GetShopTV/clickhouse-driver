@@ -10,7 +10,7 @@ executePrepared ::
   forall client renderer f.
   (ClickhouseClient client, QueryRenderer renderer, Foldable f) =>
   ClickhouseClientSettings client ->
-  ClickhouseEnv ->
+  ClickhouseConnectionSettings ->
   RenderQueryType renderer ->
   f ClickhouseType ->
   IO ByteString
@@ -23,7 +23,7 @@ executePreparedRows ::
   forall client renderer f row.
   (ClickhouseClient client, QueryRenderer renderer, Foldable row, Foldable f, Functor f) =>
   ClickhouseClientSettings client ->
-  ClickhouseEnv ->
+  ClickhouseConnectionSettings ->
   RenderQueryType renderer ->
   f (row ClickhouseType) ->
   IO ByteString

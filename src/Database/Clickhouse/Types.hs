@@ -69,18 +69,18 @@ data ClickhouseType
 type ClickhouseClient :: Type -> Constraint
 class ClickhouseClient client where
   type ClickhouseClientSettings client = settings | settings -> client
-  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseEnv -> Query -> m ByteString
+  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
 
-data ClickhouseEnv = ClickhouseEnv
+data ClickhouseConnectionSettings = ClickhouseConnectionSettings
   { username :: !Text,
     password :: !Text,
     dbScheme :: !Text
   }
   deriving (Generic)
 
-instance Default ClickhouseEnv where
+instance Default ClickhouseConnectionSettings where
   def =
-    ClickhouseEnv
+    ClickhouseConnectionSettings
       { username = "default",
         password = "",
         dbScheme = "default"

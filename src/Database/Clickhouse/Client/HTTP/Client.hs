@@ -38,7 +38,7 @@ instance ClickhouseClient ClientHTTP where
     let queryBS = runQuery query
     runReq defaultHttpConfig $ mkClickHouseRequest settings env queryBS
 
-mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseHTTPSettings -> ClickhouseEnv -> ByteString -> m ByteString
+mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> m ByteString
 mkClickHouseRequest settings connection query = do
   let body = ReqBodyBs query
   -- FIXME: Remove deubg reporting
@@ -57,8 +57,8 @@ mkClickHouseRequest settings connection query = do
   where
     ch@ClickhouseHTTPSettings {..} = settings
 
-chDefaultHeaders :: ClickhouseEnv -> Option scheme
-chDefaultHeaders connection@ClickhouseEnv {..} =
+chDefaultHeaders :: ClickhouseConnectionSettings -> Option scheme
+chDefaultHeaders connection@ClickhouseConnectionSettings {..} =
   mconcat
     [ header "X-ClickHouse-User" (cs username),
       header "X-ClickHouse-Key" (cs password),
@@ -72,7 +72,7 @@ chDefaultHeaders connection@ClickhouseEnv {..} =
 insertMultiple ::
   (MonadHttp m, MonadThrow m) =>
   ClickhouseHTTPSettings ->
-  ClickhouseEnv ->
+  ClickhouseConnectionSettings ->
   ByteString ->
   NonEmpty [Field] ->
   m ByteString
@@ -88,7 +88,7 @@ insertMultiple settings connection tableName records = do
 insertRecords ::
   (MonadHttp m, MonadThrow m, ClickRep a) =>
   ClickhouseHTTPSettings ->
-  ClickhouseEnv ->
+  ClickhouseConnectionSettings ->
   ByteString ->
   NonEmpty a ->
   m ByteString
