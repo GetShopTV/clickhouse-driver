@@ -25,10 +25,10 @@ import Database.Clickhouse.Types
 -- | Renderer of prepared query with question marks (?) placeholders in place of values.
 data ValuesRenderer :: Type
 
-type PreparedQuery = RenderQueryType ValuesRenderer
+newtype PreparedQuery = PreparedQuery {unPreparedQuery :: BSL.ByteString}
 
 instance QueryRenderer ValuesRenderer where
-  newtype RenderQueryType ValuesRenderer = PreparedQuery {unPreparedQuery :: BSL.ByteString}
+  type RenderQueryType ValuesRenderer = PreparedQuery
   renderRow = renderPrepared
   renderRows query rows = renderRow query $ do
     row <- toList rows

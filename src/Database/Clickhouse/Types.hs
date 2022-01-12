@@ -1,9 +1,9 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Database.Clickhouse.Types where
 
@@ -68,9 +68,20 @@ data ClickhouseType
 -- | Class of clickhouse clients. Currently only HTTP/HTTPS client available
 type ClickhouseClient :: Type -> Constraint
 class ClickhouseClient client where
-  type ClickhouseClientEnv client :: *
+  type ClickhouseClientSettings client = settings | settings -> client
+  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseEnv -> Query -> m ByteString
 
-  type ClientConnectionConstraints client (m :: Type -> Type) :: Constraint
-  type ClientConnectionConstraints client m = ()
+data ClickhouseEnv = ClickhouseEnv
+  { username :: !Text,
+    password :: !Text,
+    dbScheme :: !Text
+  }
+  deriving (Generic)
 
-  send :: (ClientConnectionConstraints client m) => ClickhouseClientEnv client -> Query -> m ByteString
+instance Default ClickhouseEnv where
+  def =
+    ClickhouseEnv
+      { username = "default",
+        password = "",
+        dbScheme = "default"
+      }

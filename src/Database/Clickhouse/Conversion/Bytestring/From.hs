@@ -4,6 +4,7 @@
 module Database.Clickhouse.Conversion.Bytestring.From where
 
 import Control.Monad.Error.Class (MonadError)
+import Data.Attoparsec.ByteString.Char8
 import Data.ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C8
@@ -11,6 +12,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Char (ord)
 import Data.Csv
 import qualified Data.Csv as CSV
+import Data.Foldable
 import Data.Time
 import Data.Time.Zones.All (fromTZName, tzByName)
 import Data.UUID
@@ -22,6 +24,7 @@ import Debug.Trace
 import GHC.Int
 import GHC.Word
 import Network.HTTP.Req (Scheme (Http), defaultHttpConfig, runReq)
+import Replace.Attoparsec.ByteString
 
 bsDropEnd :: Int -> ByteString -> ByteString
 bsDropEnd n xs = BS.take (BS.length xs - n) xs
@@ -35,7 +38,17 @@ readNullable spec bs = if bs == "\\N" then ClickNull else converter bs
     converter = bsToClickhouseType cktype
 
 readString :: ByteString -> ClickhouseType
-readString = ClickString
+readString = ClickString -- . unescape
+
+-- Now handled at preprocessing
+{- unescape :: ByteString -> ByteString
+unescape = streamEdit escapeableChars escaper
+  where
+    escapeableChars = asum [string "\\\\", string "\\\'"]
+    escaper c
+      | c == "\\\\" = "\\"
+      | c == "\\\'" = "\'"
+      | otherwise = c -}
 
 readUUID :: ByteString -> ClickhouseType
 readUUID bs = ClickUUID . read @UUID $ C8.unpack bs
@@ -78,7 +91,7 @@ readFloatColumn "Float64" bs = ClickFloat64 . read @Double $ C8.unpack bs
 readFloatColumn spec bs = error ("expect an integer but got: " ++ show bs ++ " with type " ++ show spec)
 
 -- TODO: Cover conversion of all types
-bsToClickhouseType :: BS.ByteString -> ByteString -> ClickhouseType
+bsToClickhouseType :: ByteString -> ByteString -> ClickhouseType
 bsToClickhouseType spec
   | "DateTime" `isPrefixOf` spec = readDateTime spec
   | "Nullable" `isPrefixOf` spec = readNullable spec

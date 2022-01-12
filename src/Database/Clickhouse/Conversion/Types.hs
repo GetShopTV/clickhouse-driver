@@ -1,4 +1,5 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Database.Clickhouse.Conversion.Types where
 
@@ -15,7 +16,7 @@ class FromClickhouseType a where
 
 type QueryRenderer :: Type -> Constraint
 class QueryRenderer renderer where
-  data RenderQueryType renderer :: Type
+  type RenderQueryType renderer = rendererQuery | rendererQuery -> renderer
   renderRow :: (Foldable row) => RenderQueryType renderer -> row ClickhouseType -> Query
   renderRow query params = renderRows query [params]
   renderRows :: (Functor f, Foldable f, Foldable row) => RenderQueryType renderer -> f (row ClickhouseType) -> Query

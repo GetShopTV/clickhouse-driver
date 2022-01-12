@@ -2,30 +2,21 @@ module Database.Clickhouse.Client.HTTP.Types where
 
 import Data.Default
 import Data.Text
+import Database.Clickhouse.Types
 import GHC.Generics
 import Network.HTTP.Req
 
-data ClickhouseSettings = ClickhouseSettings
+data ClickhouseHTTPSettings = ClickhouseHTTPSettings
   { scheme :: !Scheme,
-    username :: !Text,
     host :: !Text,
-    port :: !Int,
-    password :: !Text
+    port :: !Int
   }
   deriving (Generic)
 
-data ClickhouseEnv = ClickhouseEnv
-  { settings :: !ClickhouseSettings,
-    dbScheme :: !Text
-  }
-  deriving (Generic)
-
-instance Default ClickhouseSettings where
+instance Default ClickhouseHTTPSettings where
   def =
-    ClickhouseSettings
+    ClickhouseHTTPSettings
       { scheme = Http,
-        username = "default",
         host = "localhost",
-        port = 8123,
-        password = ""
+        port = 8123
       }
