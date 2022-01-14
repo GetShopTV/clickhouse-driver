@@ -8,12 +8,6 @@ import Data.Data
 import Data.Kind
 import Database.Clickhouse.Types
 
-class ToClickhouseType a where
-  toClickhouseType :: a -> ClickhouseType
-
-class FromClickhouseType a where
-  fromClickhouseType :: ClickhouseType -> a
-
 type QueryRenderer :: Type -> Constraint
 class QueryRenderer renderer where
   type RenderQueryType renderer = rendererQuery | rendererQuery -> renderer

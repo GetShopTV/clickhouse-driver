@@ -38,6 +38,7 @@ dependencies:
 - tz
 - replace-attoparsec
 - attoparsec
+- case-insensitive
 
 library:
   source-dirs: src

@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleInstances #-}
 
 module Database.Clickhouse.Conversion.Bytestring.From where
@@ -25,6 +24,11 @@ import GHC.Int
 import GHC.Word
 import Network.HTTP.Req (Scheme (Http), defaultHttpConfig, runReq)
 import Replace.Attoparsec.ByteString
+
+data TypeValuePairBS = TypeValuePairBS
+  { strType :: !ByteString,
+    strValue :: !ByteString
+  }
 
 bsDropEnd :: Int -> ByteString -> ByteString
 bsDropEnd n xs = BS.take (BS.length xs - n) xs
@@ -92,16 +96,13 @@ readFloatColumn spec bs = error ("expect an integer but got: " ++ show bs ++ " w
 
 -- TODO: Cover conversion of all types
 bsToClickhouseType :: ByteString -> ByteString -> ClickhouseType
-bsToClickhouseType spec
-  | "DateTime" `isPrefixOf` spec = readDateTime spec
-  | "Nullable" `isPrefixOf` spec = readNullable spec
-  | "String" `isPrefixOf` spec = readString
-  | "Date" `isPrefixOf` spec = readDate
-  | "Int" `isPrefixOf` spec = readIntColumn spec
-  | "UInt" `isPrefixOf` spec = readIntColumn spec
-  | "UUID" `isPrefixOf` spec = readUUID
-  | "Float" `isPrefixOf` spec = readFloatColumn spec
-  | otherwise = error ("Unknown Type (please implement conversion from bytestring to ClickhouseType): " ++ C8.unpack spec)
-
-instance ToClickhouseType (ByteString, ByteString) where
-  toClickhouseType (!strType, !strValue) = bsToClickhouseType strType strValue
+bsToClickhouseType chType
+  | "DateTime" `isPrefixOf` chType = readDateTime chType
+  | "Nullable" `isPrefixOf` chType = readNullable chType
+  | "String" `isPrefixOf` chType = readString
+  | "Date" `isPrefixOf` chType = readDate
+  | "Int" `isPrefixOf` chType = readIntColumn chType
+  | "UInt" `isPrefixOf` chType = readIntColumn chType
+  | "UUID" `isPrefixOf` chType = readUUID
+  | "Float" `isPrefixOf` chType = readFloatColumn chType
+  | otherwise = error ("Unknown Type (please implement conversion from bytestring to ClickhouseType): " ++ C8.unpack chType)

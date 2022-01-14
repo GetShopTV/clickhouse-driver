@@ -31,10 +31,26 @@ newtype Query = Query BSL.ByteString
 runQuery :: Query -> ByteString
 runQuery (Query bs) = BSL.toStrict bs
 
-class ToClickhouse a where
-  toClick :: a -> Either Text ClickhouseType
+-- | Class of clickhouse clients. Currently only HTTP/HTTPS client available
+type ClickhouseClient :: Type -> Constraint
+class ClickhouseClient client where
+  type ClickhouseClientSettings client = settings | settings -> client
+  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
 
-type Field = (ByteString, Either Text ClickhouseType)
+data ClickhouseConnectionSettings = ClickhouseConnectionSettings
+  { username :: !Text,
+    password :: !Text,
+    dbScheme :: !Text
+  }
+  deriving (Generic)
+
+instance Default ClickhouseConnectionSettings where
+  def =
+    ClickhouseConnectionSettings
+      { username = "default",
+        password = "",
+        dbScheme = "default"
+      }
 
 -- | Supported clickhouse types
 data ClickhouseType
@@ -64,24 +80,3 @@ data ClickhouseType
   | ClickUUID UUID
   | ClickNull
   deriving (Show, Eq)
-
--- | Class of clickhouse clients. Currently only HTTP/HTTPS client available
-type ClickhouseClient :: Type -> Constraint
-class ClickhouseClient client where
-  type ClickhouseClientSettings client = settings | settings -> client
-  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
-
-data ClickhouseConnectionSettings = ClickhouseConnectionSettings
-  { username :: !Text,
-    password :: !Text,
-    dbScheme :: !Text
-  }
-  deriving (Generic)
-
-instance Default ClickhouseConnectionSettings where
-  def =
-    ClickhouseConnectionSettings
-      { username = "default",
-        password = "",
-        dbScheme = "default"
-      }

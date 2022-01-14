@@ -19,9 +19,6 @@ import Database.Clickhouse.Types
 import Debug.Trace
 import Replace.Attoparsec.ByteString
 
-instance FromClickhouseType ByteString where
-  fromClickhouseType = toBS
-
 toBS :: ClickhouseType -> ByteString
 toBS = \case
   ClickInt32 n -> showBS n

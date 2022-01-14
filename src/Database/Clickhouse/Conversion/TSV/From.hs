@@ -22,7 +22,7 @@ import Data.UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Database.Clickhouse.Conversion.Bytestring.From
-import Database.Clickhouse.Conversion.Types (ToClickhouseType (toClickhouseType))
+import Database.Clickhouse.Conversion.ToClickhouseType
 import Database.Clickhouse.Types
 import Debug.Trace
 import GHC.Int
@@ -51,7 +51,7 @@ decodeToClickhouseRows bs =
               colTypes = vec V.! 1
               colData = V.map (V.map LBS.toStrict) . V.drop 2 $ vec
               toClickhouseType' :: ByteString -> ByteString -> ClickhouseType
-              toClickhouseType' !strType !strValue = toClickhouseType (strType, strValue)
+              toClickhouseType' !strType !strValue = toClickhouseType $ TypeValuePairBS {strType, strValue}
               converters = V.map (toClickhouseType' . LBS.toStrict) colTypes
               convertedData = V.map (V.zipWith ($) converters) colData
            in (colNames, convertedData)
