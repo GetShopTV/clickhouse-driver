@@ -7,11 +7,9 @@ import Data.List.NonEmpty
 import Database.Clickhouse.Client.HTTP.Client
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Conversion.Bytestring.To
-import Database.Clickhouse.Conversion.ToClickhouseGeneric
+import Database.Clickhouse.Conversion.Generic.ClickRep
 import Database.Clickhouse.Types
 import Network.HTTP.Req
-
-
 
 -- insertMany
 

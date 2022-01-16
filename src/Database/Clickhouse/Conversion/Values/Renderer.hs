@@ -21,7 +21,7 @@ import qualified Data.Vector as V
 import Database.Clickhouse.Conversion.Bytestring.To
 import Database.Clickhouse.Conversion.Types
 import Database.Clickhouse.Types
-import Database.Clickhouse.Conversion.FromClickhouseType
+import Database.Clickhouse.Conversion.FromClickhouse
 
 -- | Renderer of prepared query with question marks (?) placeholders in place of values.
 data ValuesRenderer :: Type

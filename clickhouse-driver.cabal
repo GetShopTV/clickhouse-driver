@@ -30,9 +30,9 @@ library
       Database.Clickhouse.Client.HTTP.Types
       Database.Clickhouse.Conversion.Bytestring.From
       Database.Clickhouse.Conversion.Bytestring.To
-      Database.Clickhouse.Conversion.FromClickhouseType
-      Database.Clickhouse.Conversion.ToClickhouseGeneric
-      Database.Clickhouse.Conversion.ToClickhouseType
+      Database.Clickhouse.Conversion.FromClickhouse
+      Database.Clickhouse.Conversion.Generic.ClickRep
+      Database.Clickhouse.Conversion.ToClickhouse
       Database.Clickhouse.Conversion.TSV.From
       Database.Clickhouse.Conversion.TSV.Renderer
       Database.Clickhouse.Conversion.TSV.To
@@ -92,7 +92,7 @@ test-suite clickhouse-driver-test
       Paths_clickhouse_driver
   hs-source-dirs:
       test
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
   build-depends:
       attoparsec
     , base >=4.7 && <5

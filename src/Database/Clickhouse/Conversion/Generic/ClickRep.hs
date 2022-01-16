@@ -3,11 +3,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Database.Clickhouse.Conversion.ToClickhouseGeneric where
+module Database.Clickhouse.Conversion.Generic.ClickRep where
 
 import Data.ByteString.Char8
 import Data.String.Conversions
-import Database.Clickhouse.Conversion.ToClickhouseType (ToClickhouseType (toClickhouseType))
+import Database.Clickhouse.Conversion.ToClickhouse (ToClickhouseType (toClickhouseType))
 import Database.Clickhouse.Types
 import GHC.Generics
 

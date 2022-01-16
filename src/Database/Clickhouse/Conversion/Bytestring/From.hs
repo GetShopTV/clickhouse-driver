@@ -23,7 +23,6 @@ import Debug.Trace
 import GHC.Int
 import GHC.Word
 import Network.HTTP.Req (Scheme (Http), defaultHttpConfig, runReq)
-import Replace.Attoparsec.ByteString
 
 data TypeValuePairBS = TypeValuePairBS
   { strType :: !ByteString,

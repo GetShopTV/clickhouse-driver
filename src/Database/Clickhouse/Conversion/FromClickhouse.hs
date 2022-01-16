@@ -1,4 +1,4 @@
-module Database.Clickhouse.Conversion.FromClickhouseType where
+module Database.Clickhouse.Conversion.FromClickhouse where
 
 import Data.ByteString
 import Database.Clickhouse.Conversion.Bytestring.To

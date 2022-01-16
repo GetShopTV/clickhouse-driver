@@ -22,7 +22,7 @@ import Data.UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Database.Clickhouse.Conversion.Bytestring.From
-import Database.Clickhouse.Conversion.ToClickhouseType
+import Database.Clickhouse.Conversion.ToClickhouse
 import Database.Clickhouse.Types
 import Debug.Trace
 import GHC.Int
