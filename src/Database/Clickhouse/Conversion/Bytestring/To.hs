@@ -4,8 +4,6 @@ import Data.Attoparsec.ByteString.Char8 as AB
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Char8 as BSC
-import Data.Char
-import Data.Csv
 import Data.Foldable
 import Data.IP
 import Data.List.NonEmpty (NonEmpty ((:|)))
@@ -14,9 +12,7 @@ import Data.Time
 import qualified Data.UUID as UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Database.Clickhouse.Conversion.Types
 import Database.Clickhouse.Types
-import Debug.Trace
 import Replace.Attoparsec.ByteString
 
 toBS :: ClickhouseType -> ByteString
@@ -80,11 +76,7 @@ escapeField = BSC.intercalate "\'" . BSC.split '\''
  -}
 
 escapeField :: ByteString -> ByteString
-escapeField = {- id -} streamEdit escapeableChars escaper
+escapeField = streamEdit escapeableChars escaper
   where
     escapeableChars = match $ asum [char '\\', char '\'']
-    escaper (bs, ch) =
-      {- traceShow (" captured char: " <> show ch <> " ") $
-        traceShow (" captured bs: " <> show bs <> " ") $
-          traceShow (" merged: ") $
-            traceShowId $  -} BS.pack ['\\', ch]
+    escaper (_bs, ch) = BS.pack ['\\', ch]

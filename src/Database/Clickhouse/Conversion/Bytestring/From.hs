@@ -2,27 +2,15 @@
 
 module Database.Clickhouse.Conversion.Bytestring.From where
 
-import Control.Monad.Error.Class (MonadError)
-import Data.Attoparsec.ByteString.Char8
 import Data.ByteString
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C8
-import qualified Data.ByteString.Lazy as LBS
-import Data.Char (ord)
-import Data.Csv
-import qualified Data.Csv as CSV
-import Data.Foldable
 import Data.Time
-import Data.Time.Zones.All (fromTZName, tzByName)
+import Data.Time.Zones.All (tzByName)
 import Data.UUID
-import Data.Vector (Vector)
-import qualified Data.Vector as V
-import Database.Clickhouse.Conversion.Types
 import Database.Clickhouse.Types
-import Debug.Trace
 import GHC.Int
 import GHC.Word
-import Network.HTTP.Req (Scheme (Http), defaultHttpConfig, runReq)
 
 data TypeValuePairBS = TypeValuePairBS
   { strType :: !ByteString,
@@ -35,7 +23,6 @@ bsDropEnd n xs = BS.take (BS.length xs - n) xs
 readNullable :: ByteString -> ByteString -> ClickhouseType
 readNullable spec bs = if bs == "\\N" then ClickNull else converter bs
   where
-    l = BS.length spec
     -- Remove beginning "Nullable(" and trailing ")"
     cktype = BS.drop 9 . bsDropEnd 1 $ spec
     converter = bsToClickhouseType cktype
@@ -67,8 +54,8 @@ readDateTime :: ByteString -> ByteString -> ClickhouseType
 readDateTime spec = readDateTimeUTC
   where
     -- Extract inner time zone from string like DateTime(\'Europe/Moscow\')
-    innerSpec = BS.drop 11 . bsDropEnd 3 $ spec
-    timeZone = tzByName innerSpec
+    _innerSpec = BS.drop 11 . bsDropEnd 3 $ spec
+    _timeZone = tzByName _innerSpec
 
 -- TODO: Handle timezone correctly
 readDateTimeUTC :: ByteString -> ClickhouseType

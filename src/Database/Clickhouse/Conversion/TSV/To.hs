@@ -1,6 +1,6 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Database.Clickhouse.Conversion.TSV.To where
 
-import qualified Data.ByteString.Lazy as BS
 import Data.Char
 import Data.Csv
 import Database.Clickhouse.Conversion.Bytestring.To

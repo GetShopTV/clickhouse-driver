@@ -2,7 +2,6 @@ module Database.Clickhouse.Client.HTTP.Types where
 
 import Data.Default
 import Data.Text
-import Database.Clickhouse.Types
 import GHC.Generics
 import Network.HTTP.Req
 

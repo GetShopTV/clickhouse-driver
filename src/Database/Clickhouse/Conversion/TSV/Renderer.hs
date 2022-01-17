@@ -1,9 +1,9 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Database.Clickhouse.Conversion.TSV.Renderer where
 
 import qualified Data.ByteString.Lazy as BSL
-import Data.Char (ord)
 import Data.Csv
 import Data.Foldable
 import Database.Clickhouse.Conversion.TSV.To

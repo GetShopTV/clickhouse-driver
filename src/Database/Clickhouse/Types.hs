@@ -10,21 +10,16 @@ module Database.Clickhouse.Types where
 import Control.Monad.Reader
 import Data.ByteString.Char8
 import qualified Data.ByteString.Lazy as BSL
-import Data.Csv
 import Data.Default
 import Data.DoubleWord
 import Data.Int
 import Data.Kind
-import Data.Proxy
-import Data.String.Conversions
 import Data.Text
 import Data.Time
 import Data.UUID
 import Data.Vector
 import Data.Word
 import GHC.Generics
-import GHC.TypeLits
-import Network.HTTP.Req
 
 newtype Query = Query BSL.ByteString
 

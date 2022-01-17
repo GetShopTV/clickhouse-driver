@@ -61,6 +61,10 @@ library:
   - OverloadedLabels
   - DuplicateRecordFields
   - PolyKinds
+  ghc-options:
+    - -Wall 
+    - -Werror
+
 tests:
   clickhouse-driver-test:
     main:                Spec.hs

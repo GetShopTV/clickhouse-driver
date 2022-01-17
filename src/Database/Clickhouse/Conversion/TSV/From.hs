@@ -4,30 +4,18 @@
 module Database.Clickhouse.Conversion.TSV.From where
 
 import Control.Applicative
-import Control.Monad.Error.Class (MonadError)
 import Data.Attoparsec.ByteString.Char8 as AB
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
-import qualified Data.ByteString.Char8 as C8
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Char (ord)
 import Data.Csv
-import qualified Data.Csv as CSV
-import Data.Foldable
-import Data.Time
-import Data.Time.Zones.All (fromTZName, tzByName)
-import Data.UUID
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Database.Clickhouse.Conversion.Bytestring.From
 import Database.Clickhouse.Conversion.ToClickhouse
 import Database.Clickhouse.Types
-import Debug.Trace
-import GHC.Int
-import GHC.Word
-import Network.HTTP.Req (Scheme (Http), defaultHttpConfig, runReq)
 import Replace.Attoparsec.ByteString
 
 -- | ClickHouse use tab-separated csv.
@@ -39,7 +27,6 @@ decOpts =
 
 decodeToClickhouseRows :: ByteString -> (Vector LBS.ByteString, Vector (Vector ClickhouseType))
 decodeToClickhouseRows bs =
-  {- traceShow bs $ -}
   case decoded of
     Left s -> error $ "Failed to decode TSV, error: " <> s
     Right vec -> do

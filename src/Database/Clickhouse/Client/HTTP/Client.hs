@@ -6,21 +6,35 @@
 
 module Database.Clickhouse.Client.HTTP.Client where
 
-import Control.Monad.Catch
-import Control.Monad.IO.Class
+import Control.Monad.Catch (MonadThrow)
 import Data.ByteString.Char8 (ByteString)
-import qualified Data.ByteString.Char8 as BS
-import Data.Kind
-import Data.List.NonEmpty (NonEmpty (..), fromList, toList)
+import Data.Kind (Type)
 import Data.String.Conversions (cs)
-import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import qualified Data.UUID as UUID
-import Data.Vector (Vector)
-import qualified Data.Vector as V
 import Database.Clickhouse.Client.HTTP.Types
+  ( ClickhouseHTTPSettings (..),
+  )
 import Database.Clickhouse.Types
+  ( ClickhouseClient (..),
+    ClickhouseConnectionSettings (..),
+    runQuery,
+  )
 import Network.HTTP.Req as R
+  ( MonadHttp,
+    Option,
+    POST (POST),
+    ReqBodyBs (ReqBodyBs),
+    Scheme (Http, Https),
+    bsResponse,
+    defaultHttpConfig,
+    header,
+    http,
+    https,
+    req,
+    responseBody,
+    runReq,
+  )
+import qualified Network.HTTP.Req as R
 
 type ClientHTTP :: Type
 data ClientHTTP
@@ -34,10 +48,6 @@ instance ClickhouseClient ClientHTTP where
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> m ByteString
 mkClickHouseRequest settings connection query = do
   let body = ReqBodyBs query
-  -- FIXME: Remove deubg reporting
-  liftIO $ BS.putStrLn "\n"
-  liftIO $ BS.putStrLn query
-  liftIO $ BS.putStrLn "\n"
   case scheme of
     Https -> do
       response <-
@@ -48,10 +58,10 @@ mkClickHouseRequest settings connection query = do
         req POST (http host) body bsResponse (R.port port <> chDefaultHeaders connection)
       pure (responseBody response)
   where
-    ch@ClickhouseHTTPSettings {..} = settings
+    ClickhouseHTTPSettings {..} = settings
 
 chDefaultHeaders :: ClickhouseConnectionSettings -> Option scheme
-chDefaultHeaders connection@ClickhouseConnectionSettings {..} =
+chDefaultHeaders ClickhouseConnectionSettings {..} =
   mconcat
     [ header "X-ClickHouse-User" (cs username),
       header "X-ClickHouse-Key" (cs password),
