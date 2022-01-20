@@ -60,7 +60,6 @@ toBS = \case
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) =>  ClickhouseSettings -> ByteString -> m ByteString
 mkClickHouseRequest ch@ClickhouseSettings { scheme, username, host, port , password} query = do
   let body = ReqBodyBs query
-  liftIO $ BS.putStrLn query
   case scheme of
     Https -> do
       response <- req POST (https $ host) (body) bsResponse (R.port port <> header "X-ClickHouse-User"  (cs username) <> header "X-ClickHouse-Key" (cs password))
