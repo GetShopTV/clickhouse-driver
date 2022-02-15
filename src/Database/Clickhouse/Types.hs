@@ -1,36 +1,53 @@
-{-# LANGUAGE AllowAmbiguousTypes   #-}
-{-# LANGUAGE DefaultSignatures     #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE TypeSynonymInstances  #-}
-
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Database.Clickhouse.Types where
 
-import           Data.ByteString.Char8
-import           Data.Default
-import           Data.DoubleWord
-import           Data.Int
-import           Data.Proxy
-import           Data.String.Conversions
-import           Data.Text
-import           Data.Time
-import           Data.UUID
-import           Data.Vector
-import           Data.Word
-import           GHC.Generics
-import           GHC.TypeLits
-import           Network.HTTP.Req
+import Control.Monad.Reader
+import Data.ByteString.Char8
+import qualified Data.ByteString.Lazy as BSL
+import Data.Default
+import Data.DoubleWord
+import Data.Int
+import Data.Kind
+import Data.Text
+import Data.Time
+import Data.UUID
+import Data.Vector
+import Data.Word
+import GHC.Generics
 
-class ToClickhouse a where
-  toClick :: a -> Either Text ClickhouseType
+newtype Query = Query BSL.ByteString
 
-type Field = (ByteString, Either Text ClickhouseType)
+runQuery :: Query -> ByteString
+runQuery (Query bs) = BSL.toStrict bs
 
+-- | Class of clickhouse clients. Currently only HTTP/HTTPS client available
+type ClickhouseClient :: Type -> Constraint
+class ClickhouseClient client where
+  type ClickhouseClientSettings client = settings | settings -> client
+  send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
+
+data ClickhouseConnectionSettings = ClickhouseConnectionSettings
+  { username :: !Text,
+    password :: !Text,
+    dbScheme :: !Text
+  }
+  deriving (Generic)
+
+instance Default ClickhouseConnectionSettings where
+  def =
+    ClickhouseConnectionSettings
+      { username = "default",
+        password = "",
+        dbScheme = "default"
+      }
+
+-- | Supported clickhouse types
 data ClickhouseType
   = ClickInt8 !Int8
   | ClickInt16 !Int16
@@ -58,21 +75,3 @@ data ClickhouseType
   | ClickUUID UUID
   | ClickNull
   deriving (Show, Eq)
-
-data ClickhouseSettings = ClickhouseSettings
-  { scheme   :: !Scheme
-  , username :: !Text
-  , host     :: !Text
-  , port     :: !Int
-  , password :: !Text
-  }
-  deriving Generic
-
-instance Default ClickhouseSettings where
-  def = ClickhouseSettings  { scheme = Http
-                            , username     = "default"
-                            , host         = "localhost"
-                            , port         = 8123
-                            , password     = ""
-                            }
-

@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.4.
+-- This file has been generated from package.yaml by hpack version 0.34.6.
 --
 -- see: https://github.com/sol/hpack
 
@@ -24,8 +24,21 @@ source-repository head
 
 library
   exposed-modules:
-      Database.Clickhouse.Client
-      Database.Clickhouse.Generic
+      Database.ClickHouse
+      Database.Clickhouse.Client.HTTP.Client
+      Database.Clickhouse.Client.HTTP.Simple
+      Database.Clickhouse.Client.HTTP.Types
+      Database.Clickhouse.Conversion.Bytestring.From
+      Database.Clickhouse.Conversion.Bytestring.To
+      Database.Clickhouse.Conversion.FromClickhouse
+      Database.Clickhouse.Conversion.Generic.ClickRep
+      Database.Clickhouse.Conversion.ToClickhouse
+      Database.Clickhouse.Conversion.TSV.From
+      Database.Clickhouse.Conversion.TSV.Renderer
+      Database.Clickhouse.Conversion.TSV.To
+      Database.Clickhouse.Conversion.TSV.Types
+      Database.Clickhouse.Conversion.Types
+      Database.Clickhouse.Conversion.Values.Renderer
       Database.Clickhouse.Types
   other-modules:
       Paths_clickhouse_driver
@@ -50,17 +63,25 @@ library
       OverloadedLabels
       DuplicateRecordFields
       PolyKinds
+  ghc-options: -Wall -Werror
   build-depends:
-      base >=4.7 && <5
+      attoparsec
+    , base >=4.7 && <5
+    , binary
     , bytestring
+    , case-insensitive
+    , cassava
     , data-default
     , data-dword
     , exceptions
     , iproute
+    , mtl
+    , replace-attoparsec
     , req
     , string-conversions
     , text
     , time
+    , tz
     , uuid
     , vector
   default-language: Haskell2010
@@ -72,19 +93,26 @@ test-suite clickhouse-driver-test
       Paths_clickhouse_driver
   hs-source-dirs:
       test
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N
+  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
   build-depends:
-      base >=4.7 && <5
+      attoparsec
+    , base >=4.7 && <5
+    , binary
     , bytestring
+    , case-insensitive
+    , cassava
     , clickhouse-driver
     , data-default
     , data-dword
     , exceptions
     , iproute
+    , mtl
+    , replace-attoparsec
     , req
     , string-conversions
     , text
     , time
+    , tz
     , uuid
     , vector
   default-language: Haskell2010

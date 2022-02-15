@@ -32,6 +32,14 @@ dependencies:
 - req
 - iproute
 - exceptions
+- binary
+- mtl
+- cassava
+- tz
+- replace-attoparsec
+- attoparsec
+- case-insensitive
+
 library:
   source-dirs: src
   default-extensions:
@@ -53,6 +61,10 @@ library:
   - OverloadedLabels
   - DuplicateRecordFields
   - PolyKinds
+  ghc-options:
+    - -Wall 
+    - -Werror
+
 tests:
   clickhouse-driver-test:
     main:                Spec.hs
@@ -61,5 +73,7 @@ tests:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -Wall 
+    - -Werror
     dependencies:
     - clickhouse-driver
