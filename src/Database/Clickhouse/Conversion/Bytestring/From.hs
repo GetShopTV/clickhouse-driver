@@ -95,4 +95,5 @@ bsToClickhouseType chType
   | "UUID" `isPrefixOf` chType = readUUID
   | "Float" `isPrefixOf` chType = readFloatColumn chType
   | "LowCardinality(String)" `isPrefixOf` chType = readLowCardinalityString
+  | "FixedString(2)" `isPrefixOf` chType = readString
   | otherwise = error ("Unknown Type (please implement conversion from bytestring to ClickhouseType): " ++ C8.unpack chType)
