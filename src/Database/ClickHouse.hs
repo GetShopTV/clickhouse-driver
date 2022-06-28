@@ -2,6 +2,7 @@
 
 module Database.ClickHouse where
 
+import Conduit
 import Data.ByteString
 import Database.Clickhouse.Conversion.Types
 import Database.Clickhouse.Types
@@ -16,8 +17,21 @@ executePrepared ::
   IO ByteString
 executePrepared settings connection query params =
   send @client settings connection renderedRow
-  where
-    renderedRow = renderRow @renderer query params
+ where
+  renderedRow = renderRow @renderer query params
+
+executePreparedSource ::
+  forall client renderer f i m.
+  (ClickhouseClientSource client, QueryRenderer renderer, Foldable f, MonadResource m) =>
+  ClickhouseClientSettings client ->
+  ClickhouseConnectionSettings ->
+  RenderQueryType renderer ->
+  f ClickhouseType ->
+  ConduitM i ByteString m ()
+executePreparedSource settings connection query params =
+  sendSource @client settings connection renderedRow
+ where
+  renderedRow = renderRow @renderer query params
 
 executePreparedRows ::
   forall client renderer f row.
@@ -29,5 +43,5 @@ executePreparedRows ::
   IO ByteString
 executePreparedRows settings connection query params =
   send @client settings connection renderedRow
-  where
-    renderedRow = renderRows @renderer query params
+ where
+  renderedRow = renderRows @renderer query params
