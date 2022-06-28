@@ -32,7 +32,7 @@ class ClickhouseClient client where
   type ClickhouseClientSettings client = settings | settings -> client
   send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
 
-class ClickhouseClientSource client where
+class ClickhouseClient client => ClickhouseClientSource client where
   sendSource :: (MonadIO m, MonadResource m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> ConduitM i ByteString m ()
 
 data ClickhouseConnectionSettings = ClickhouseConnectionSettings

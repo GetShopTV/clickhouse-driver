@@ -6,7 +6,6 @@ module Database.Clickhouse.Conversion.TSV.From where
 
 import Conduit
 import Control.Applicative
-import Control.Monad.Except
 import Data.Attoparsec.ByteString.Char8 as AB
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BSC
@@ -14,7 +13,8 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Char (ord)
 import Data.Csv
-import Data.Csv.Conduit (CsvParseError, fromCsv)
+import Data.Csv.Conduit (fromCsv)
+import Data.Functor
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Database.Clickhouse.Conversion.Bytestring.From
@@ -49,20 +49,25 @@ decodeToClickhouseRows bs =
  where
   decoded = decodeWith decOpts NoHeader (preprocess bs)
 
-decodeToClickhouseRowsC :: (Monad m, MonadError CsvParseError m) => ConduitM ByteString (Vector ClickhouseType) m ()
+decodeToClickhouseRowsC :: (Monad m) => ConduitM ByteString (Vector ClickhouseType) m ()
 decodeToClickhouseRowsC =
-  mapC escapeTSV -- Escaping
-    .| fromCsv @(Vector ByteString) decOpts NoHeader -- decoding
-    .| do
-      colNames' <- await
-      colTypes' <- await
-      case (colNames', colTypes') of
-        (Just _colNames, Just !colTypes) -> do
-          let toClickhouseType' :: ByteString -> ByteString -> ClickhouseType
-              toClickhouseType' !strType !strValue = toClickhouseType $ TypeValuePairBS{strType, strValue}
-              converters = V.map toClickhouseType' colTypes
-          mapC (V.zipWith ($) converters)
-        _ -> error "Failed due to returned TSV row count lesser than at least 2 (column names and types)."
+  runExceptC
+    ( exceptC (mapC escapeTSV $> Right ()) -- Escaping
+        .| fromCsv @(Vector ByteString) decOpts NoHeader -- decoding
+        .| do
+          colNames' <- await
+          colTypes' <- await
+          case (colNames', colTypes') of
+            (Just _colNames, Just !colTypes) -> do
+              let toClickhouseType' :: ByteString -> ByteString -> ClickhouseType
+                  toClickhouseType' !strType !strValue = toClickhouseType $ TypeValuePairBS{strType, strValue}
+                  converters = V.map toClickhouseType' colTypes
+              mapC (V.zipWith ($) converters)
+            _ -> error "Failed due to returned TSV row count lesser than at least 2 (column names and types)."
+    )
+    >>= \case
+      Left cpe -> error $ "Failed to decode TSV: " <> show cpe
+      Right _ -> pure ()
 
 preprocess :: ByteString -> LBSC.ByteString
 preprocess bs = LBSC.cons '\"' $ LBSC.snoc (LBS.fromStrict (escapeTSV bs)) '\"'
