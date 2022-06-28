@@ -49,10 +49,9 @@ decodeToClickhouseRows bs =
  where
   decoded = decodeWith decOpts NoHeader (preprocess bs)
 
-decodeToClickhouseRowsC :: (Monad m, MonadError CsvParseError m) => ConduitM i ByteString m () -> ConduitM i (Vector ClickhouseType) m ()
-decodeToClickhouseRowsC stream =
-  stream
-    .| mapC escapeTSV -- Escaping
+decodeToClickhouseRowsC :: (Monad m, MonadError CsvParseError m) => ConduitM ByteString (Vector ClickhouseType) m ()
+decodeToClickhouseRowsC =
+  mapC escapeTSV -- Escaping
     .| fromCsv @(Vector ByteString) decOpts NoHeader -- decoding
     .| do
       colNames' <- await
