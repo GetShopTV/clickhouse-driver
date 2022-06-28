@@ -27,6 +27,7 @@ library
       Database.ClickHouse
       Database.Clickhouse.Client.HTTP.Client
       Database.Clickhouse.Client.HTTP.Simple
+      Database.Clickhouse.Client.HTTP.Streaming
       Database.Clickhouse.Client.HTTP.Types
       Database.Clickhouse.Conversion.Bytestring.From
       Database.Clickhouse.Conversion.Bytestring.To
