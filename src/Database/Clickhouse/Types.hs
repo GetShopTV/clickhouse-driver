@@ -7,7 +7,7 @@
 
 module Database.Clickhouse.Types where
 
-import Control.Monad.Reader
+import Conduit
 import Data.ByteString.Char8
 import qualified Data.ByteString.Lazy as BSL
 import Data.Default
@@ -32,19 +32,22 @@ class ClickhouseClient client where
   type ClickhouseClientSettings client = settings | settings -> client
   send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
 
+class ClickhouseClientSource client where
+  sendSource :: (MonadIO m, MonadResource m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> ConduitM i ByteString m ()
+
 data ClickhouseConnectionSettings = ClickhouseConnectionSettings
-  { username :: !Text,
-    password :: !Text,
-    dbScheme :: !Text
+  { username :: !Text
+  , password :: !Text
+  , dbScheme :: !Text
   }
   deriving (Generic)
 
 instance Default ClickhouseConnectionSettings where
   def =
     ClickhouseConnectionSettings
-      { username = "default",
-        password = "",
-        dbScheme = "default"
+      { username = "default"
+      , password = ""
+      , dbScheme = "default"
       }
 
 -- | Supported clickhouse types

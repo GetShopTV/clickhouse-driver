@@ -11,29 +11,31 @@ import Data.ByteString.Char8 (ByteString)
 import Data.Kind (Type)
 import Data.String.Conversions (cs)
 import qualified Data.Text.Encoding as TE
-import Database.Clickhouse.Client.HTTP.Types
-  ( ClickhouseHTTPSettings (..),
-  )
-import Database.Clickhouse.Types
-  ( ClickhouseClient (..),
-    ClickhouseConnectionSettings (..),
-    runQuery,
-  )
-import Network.HTTP.Req as R
-  ( MonadHttp,
-    Option,
-    POST (POST),
-    ReqBodyBs (ReqBodyBs),
-    Scheme (Http, Https),
-    bsResponse,
-    defaultHttpConfig,
-    header,
-    http,
-    https,
-    req,
-    responseBody,
-    runReq,
-  )
+import Database.Clickhouse.Client.HTTP.Streaming (mkClickHouseRequestSource)
+import Database.Clickhouse.Client.HTTP.Types (
+  ClickhouseHTTPSettings (..),
+ )
+import Database.Clickhouse.Types (
+  ClickhouseClient (..),
+  ClickhouseClientSource (sendSource),
+  ClickhouseConnectionSettings (..),
+  runQuery,
+ )
+import Network.HTTP.Req as R (
+  MonadHttp,
+  Option,
+  POST (POST),
+  ReqBodyBs (ReqBodyBs),
+  Scheme (Http, Https),
+  bsResponse,
+  defaultHttpConfig,
+  header,
+  http,
+  https,
+  req,
+  responseBody,
+  runReq,
+ )
 import qualified Network.HTTP.Req as R
 
 type ClientHTTP :: Type
@@ -44,6 +46,11 @@ instance ClickhouseClient ClientHTTP where
   send settings env query = do
     let queryBS = runQuery query
     runReq defaultHttpConfig $ mkClickHouseRequest settings env queryBS
+
+instance ClickhouseClientSource ClientHTTP where
+  sendSource settings env query = do
+    let queryBS = runQuery query
+    mkClickHouseRequestSource settings env queryBS
 
 mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> m ByteString
 mkClickHouseRequest settings connection query = do
@@ -57,15 +64,15 @@ mkClickHouseRequest settings connection query = do
       response <-
         req POST (http host) body bsResponse (R.port port <> chDefaultHeaders connection)
       pure (responseBody response)
-  where
-    ClickhouseHTTPSettings {..} = settings
+ where
+  ClickhouseHTTPSettings{..} = settings
 
 chDefaultHeaders :: ClickhouseConnectionSettings -> Option scheme
-chDefaultHeaders ClickhouseConnectionSettings {..} =
+chDefaultHeaders ClickhouseConnectionSettings{..} =
   mconcat
-    [ header "X-ClickHouse-User" (cs username),
-      header "X-ClickHouse-Key" (cs password),
-      -- Used only when selecting data
-      header "X-ClickHouse-Format" "TSVWithNamesAndTypes",
-      header "X-ClickHouse-Database" (TE.encodeUtf8 dbScheme)
+    [ header "X-ClickHouse-User" (cs username)
+    , header "X-ClickHouse-Key" (cs password)
+    , -- Used only when selecting data
+      header "X-ClickHouse-Format" "TSVWithNamesAndTypes"
+    , header "X-ClickHouse-Database" (TE.encodeUtf8 dbScheme)
     ]

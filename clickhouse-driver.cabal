@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.6.
+-- This file has been generated from package.yaml by hpack version 0.35.0.
 --
 -- see: https://github.com/sol/hpack
 
@@ -71,9 +71,12 @@ library
     , bytestring
     , case-insensitive
     , cassava
+    , cassava-conduit
+    , conduit
     , data-default
     , data-dword
     , exceptions
+    , http-conduit
     , iproute
     , mtl
     , replace-attoparsec
@@ -101,10 +104,13 @@ test-suite clickhouse-driver-test
     , bytestring
     , case-insensitive
     , cassava
+    , cassava-conduit
     , clickhouse-driver
+    , conduit
     , data-default
     , data-dword
     , exceptions
+    , http-conduit
     , iproute
     , mtl
     , replace-attoparsec
