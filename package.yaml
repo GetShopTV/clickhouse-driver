@@ -31,6 +31,9 @@ dependencies:
   - string-conversions
   - req
   - http-conduit
+  - http-client
+  - http-client-tls
+  - resourcet
   - conduit
   - iproute
   - exceptions

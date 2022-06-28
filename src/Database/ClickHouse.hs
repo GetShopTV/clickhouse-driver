@@ -27,7 +27,7 @@ executePreparedSource ::
   ClickhouseConnectionSettings ->
   RenderQueryType renderer ->
   f ClickhouseType ->
-  ConduitM i ByteString m ()
+  Acquire (ConduitM i ByteString m ())
 executePreparedSource settings connection query params =
   sendSource @client settings connection renderedRow
  where

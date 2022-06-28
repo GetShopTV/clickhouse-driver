@@ -33,7 +33,7 @@ class ClickhouseClient client where
   send :: (MonadIO m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> m ByteString
 
 class ClickhouseClient client => ClickhouseClientSource client where
-  sendSource :: (MonadIO m, MonadResource m) => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> ConduitM i ByteString m ()
+  sendSource :: MonadIO m => ClickhouseClientSettings client -> ClickhouseConnectionSettings -> Query -> Acquire (ConduitM i ByteString m ())
 
 data ClickhouseConnectionSettings = ClickhouseConnectionSettings
   { username :: !Text

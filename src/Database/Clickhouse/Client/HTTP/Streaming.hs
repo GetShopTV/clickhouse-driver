@@ -11,12 +11,15 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Types
+import qualified Network.HTTP.Client as H
+import Network.HTTP.Client.Conduit (bodyReaderSource)
+import qualified Network.HTTP.Client.TLS as H
 import Network.HTTP.Conduit (RequestBody (..))
 import Network.HTTP.Req (Scheme (..), http, https, renderUrl)
 import Network.HTTP.Simple
 
-mkClickHouseRequestSource :: MonadResource m => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> ConduitM i ByteString m ()
-mkClickHouseRequestSource settings connection query = httpSource chRequest getResponseBody
+mkClickHouseRequestSource :: MonadIO m => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> Acquire (ConduitM i ByteString m ())
+mkClickHouseRequestSource settings connection query = httpSourceA chRequest getResponseBody
  where
   ClickhouseHTTPSettings{..} = settings
   chRequest =
@@ -37,3 +40,15 @@ chDefaultHeadersKV ClickhouseConnectionSettings{..} =
     ("X-ClickHouse-Format", "TSVWithNamesAndTypes")
   , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
   ]
+
+httpSourceA ::
+  (MonadIO n) =>
+  H.Request ->
+  ( H.Response (ConduitM i ByteString n ()) ->
+    ConduitM i o m r
+  ) ->
+  Acquire (ConduitM i o m r)
+httpSourceA req withRes = do
+  man <- liftIO H.getGlobalManager
+  let ack = mkAcquire (H.responseOpen req man) H.responseClose
+  withRes . fmap bodyReaderSource <$> ack

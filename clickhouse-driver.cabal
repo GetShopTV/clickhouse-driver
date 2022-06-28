@@ -77,11 +77,14 @@ library
     , data-default
     , data-dword
     , exceptions
+    , http-client
+    , http-client-tls
     , http-conduit
     , iproute
     , mtl
     , replace-attoparsec
     , req
+    , resourcet
     , string-conversions
     , text
     , time
@@ -111,11 +114,14 @@ test-suite clickhouse-driver-test
     , data-default
     , data-dword
     , exceptions
+    , http-client
+    , http-client-tls
     , http-conduit
     , iproute
     , mtl
     , replace-attoparsec
     , req
+    , resourcet
     , string-conversions
     , text
     , time
