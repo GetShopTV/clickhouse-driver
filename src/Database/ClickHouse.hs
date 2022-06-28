@@ -22,7 +22,7 @@ executePrepared settings connection query params =
 
 executePreparedSource ::
   forall client renderer f i m.
-  (ClickhouseClientSource client, QueryRenderer renderer, Foldable f, MonadResource m) =>
+  (ClickhouseClientSource client, QueryRenderer renderer, Foldable f, MonadIO m) =>
   ClickhouseClientSettings client ->
   ClickhouseConnectionSettings ->
   RenderQueryType renderer ->
