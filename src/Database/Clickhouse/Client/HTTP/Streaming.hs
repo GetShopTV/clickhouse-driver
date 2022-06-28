@@ -17,23 +17,23 @@ import Network.HTTP.Simple
 
 mkClickHouseRequestSource :: MonadResource m => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> ConduitM i ByteString m ()
 mkClickHouseRequestSource settings connection query = httpSource chRequest getResponseBody
-  where
-    ClickhouseHTTPSettings{..} = settings
-    chRequest =
-        fromString (T.unpack clickhouseUrl)
-            & setRequestBody (RequestBodyBS query)
-            & setRequestHeaders (chDefaultHeadersKV connection)
-            & setRequestPort port
-            & setRequestMethod "POST"
-    clickhouseUrl = case scheme of
-        Http -> renderUrl $ http host
-        Https -> renderUrl $https host
+ where
+  ClickhouseHTTPSettings{..} = settings
+  chRequest =
+    fromString (T.unpack clickhouseUrl)
+      & setRequestBody (RequestBodyBS query)
+      & setRequestHeaders (chDefaultHeadersKV connection)
+      & setRequestPort port
+      & setRequestMethod "POST"
+  clickhouseUrl = case scheme of
+    Http -> renderUrl $ http host
+    Https -> renderUrl $ https host
 
 chDefaultHeadersKV :: ClickhouseConnectionSettings -> RequestHeaders
 chDefaultHeadersKV ClickhouseConnectionSettings{..} =
-    [ ("X-ClickHouse-User", cs username)
-    , ("X-ClickHouse-Key", cs password)
-    , -- Used only when selecting data
-      ("X-ClickHouse-Format", "TSVWithNamesAndTypes")
-    , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
-    ]
+  [ ("X-ClickHouse-User", cs username)
+  , ("X-ClickHouse-Key", cs password)
+  , -- Used only when selecting data
+    ("X-ClickHouse-Format", "TSVWithNamesAndTypes")
+  , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
+  ]
