@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -6,73 +7,76 @@
 
 module Database.Clickhouse.Client.HTTP.Client where
 
-import Control.Monad.Catch (MonadThrow)
-import Data.ByteString.Char8 (ByteString)
 import Data.Kind (Type)
-import Data.String.Conversions (cs)
-import qualified Data.Text.Encoding as TE
-import Database.Clickhouse.Client.HTTP.Streaming (mkClickHouseRequestSource)
-import Database.Clickhouse.Client.HTTP.Types (
-  ClickhouseHTTPSettings (..),
- )
-import Database.Clickhouse.Types (
-  ClickhouseClient (..),
-  ClickhouseClientSource (sendSource),
-  ClickhouseConnectionSettings (..),
-  runQuery,
- )
-import Network.HTTP.Req as R (
-  MonadHttp,
-  Option,
-  POST (POST),
-  ReqBodyBs (ReqBodyBs),
-  Scheme (Http, Https),
-  bsResponse,
-  defaultHttpConfig,
-  header,
-  http,
-  https,
-  req,
-  responseBody,
-  runReq,
- )
-import qualified Network.HTTP.Req as R
+import Data.Text.Encoding qualified as TE
+import Database.Clickhouse.Client.Types
+
+import Conduit
+import Data.ByteString
+import Data.Function
+import Data.String
+import Data.String.Conversions
+import Database.Clickhouse.Client.HTTP.Types
+import Network.HTTP.Client qualified as H
+import Network.HTTP.Client.Conduit hiding (httpSource)
+import Network.HTTP.Client.TLS qualified as H
+import Network.HTTP.Simple hiding (Query)
 
 type ClientHTTP :: Type
 data ClientHTTP
 
 instance ClickhouseClient ClientHTTP where
   type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPSettings
-  send settings env query = do
-    let queryBS = runQuery query
-    runReq defaultHttpConfig $ mkClickHouseRequest settings env queryBS
+  sendSource settings query = do
+    mkClickHouseRequestSource settings query
 
-instance ClickhouseClientSource ClientHTTP where
-  sendSource settings env query = do
-    let queryBS = runQuery query
-    mkClickHouseRequestSource settings env queryBS
+instance ClickhouseClientAcquire ClientHTTP where
+  sendSourceAcquire settings query = do
+    mkClickHouseRequestSourceAсquire settings query
 
-mkClickHouseRequest :: (MonadHttp m, MonadThrow m) => ClickhouseHTTPSettings -> ClickhouseConnectionSettings -> ByteString -> m ByteString
-mkClickHouseRequest settings connection query = do
-  let body = ReqBodyBs query
-  case scheme of
-    Https -> do
-      response <-
-        req POST (https host) body bsResponse (R.port port <> chDefaultHeaders connection)
-      pure (responseBody response)
-    Http -> do
-      response <-
-        req POST (http host) body bsResponse (R.port port <> chDefaultHeaders connection)
-      pure (responseBody response)
+mkClickHouseRequestSource ::
+  MonadResource m =>
+  ClickhouseConnectionSettings ClientHTTP ->
+  Query ->
+  ConduitM i ByteString m ()
+mkClickHouseRequestSource settings (Query query) = httpSource chRequest getResponseBody
  where
-  ClickhouseHTTPSettings{..} = settings
+  ClickhouseHTTPSettings{..} = connectionSettings settings
+  chRequest =
+    fromString clickhouseUrl
+      & setRequestBody (requestBodySourceChunked query)
+      & setRequestHeaders (chDefaultHeadersKV settings)
+      & setRequestPort port
+      & setRequestMethod "POST"
 
-chDefaultHeaders :: ClickhouseConnectionSettings -> Option scheme
-chDefaultHeaders ClickhouseConnectionSettings{..} =
-  mconcat
-    [ header "X-ClickHouse-User" (cs username)
-    , header "X-ClickHouse-Key" (cs password)
-    , -- Used only when selecting data
-      header "X-ClickHouse-Format" "TSVWithNamesAndTypes"
-    , header "X-ClickHouse-Database" (TE.encodeUtf8 dbScheme)
-    ]
+mkClickHouseRequestSourceAсquire :: MonadIO m => ClickhouseConnectionSettings ClientHTTP -> Query -> Acquire (ConduitM i ByteString m ())
+mkClickHouseRequestSourceAсquire settings (Query query) = httpSourceA chRequest getResponseBody
+ where
+  ClickhouseHTTPSettings{..} = connectionSettings settings
+  chRequest =
+    fromString clickhouseUrl
+      & setRequestBody (requestBodySourceChunked query)
+      & setRequestHeaders (chDefaultHeadersKV settings)
+      & setRequestPort port
+      & setRequestMethod "POST"
+
+chDefaultHeadersKV :: ClickhouseConnectionSettings ClientHTTP -> RequestHeaders
+chDefaultHeadersKV ClickhouseConnectionSettings{..} =
+  [ ("X-ClickHouse-User", cs username)
+  , ("X-ClickHouse-Key", cs password)
+  , -- Used only when selecting data
+    ("X-ClickHouse-Format", "CSVWithNamesAndTypes")
+  , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
+  ]
+
+httpSourceA ::
+  (MonadIO n) =>
+  H.Request ->
+  ( H.Response (ConduitM i ByteString n ()) ->
+    ConduitM i o m r
+  ) ->
+  Acquire (ConduitM i o m r)
+httpSourceA req withRes = do
+  man <- liftIO H.getGlobalManager
+  let ack = mkAcquire (H.responseOpen req man) H.responseClose
+  withRes . fmap bodyReaderSource <$> ack

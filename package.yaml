@@ -1,6 +1,6 @@
 name: clickhouse-driver
 version: 0.1.0.0
-github: "githubuser/clickhouse-driver"
+github: "GetShopTV/clickhouse-driver"
 license: BSD3
 author: "Author name here"
 maintainer: "example@example.com"
@@ -19,6 +19,32 @@ extra-source-files:
 # common to point users to the README.md file.
 description: Please see the README on GitHub at <https://github.com/githubuser/clickhouse-driver#readme>
 
+ghc-options:
+  - -Wall
+  - -Wincomplete-patterns
+
+default-extensions:
+  - UndecidableInstances
+  - OverloadedStrings
+  - TypeOperators
+  - TypeApplications
+  - TypeFamilies
+  - DataKinds
+  - FunctionalDependencies
+  - LambdaCase
+  - NamedFieldPuns
+  - ViewPatterns
+  - PatternSynonyms
+  - GADTs
+  - DeriveGeneric
+  - DeriveAnyClass
+  - DerivingStrategies
+  - GeneralizedNewtypeDeriving
+  - OverloadedLabels
+  - DuplicateRecordFields
+  - PolyKinds
+  - ImportQualifiedPost
+
 dependencies:
   - base >= 4.7 && < 5
   - data-dword
@@ -29,12 +55,12 @@ dependencies:
   - time
   - text
   - string-conversions
-  - req
   - http-conduit
   - http-client
   - http-client-tls
   - resourcet
   - conduit
+  - conduit-extra
   - iproute
   - exceptions
   - binary
@@ -42,34 +68,25 @@ dependencies:
   - cassava
   - cassava-conduit
   - tz
-  - replace-attoparsec
-  - attoparsec
   - case-insensitive
+  - aeson
+  - safe-decimal
 
 library:
   source-dirs: src
-  default-extensions:
-    - OverloadedStrings
-    - TypeOperators
-    - TypeApplications
-    - TypeFamilies
-    - DataKinds
-    - FunctionalDependencies
-    - LambdaCase
-    - NamedFieldPuns
-    - ViewPatterns
-    - PatternSynonyms
-    - GADTs
-    - DeriveGeneric
-    - DeriveAnyClass
-    - DerivingStrategies
-    - GeneralizedNewtypeDeriving
-    - OverloadedLabels
-    - DuplicateRecordFields
-    - PolyKinds
-  ghc-options:
-    - -Wall
-    - -Werror
+
+executables:
+  clickhouse-driver-example:
+    main: Main.hs
+    source-dirs: example
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - clickhouse-driver
+      - PyF
+      - template-haskell
 
 tests:
   clickhouse-driver-test:
@@ -79,7 +96,5 @@ tests:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
-      - -Wall
-      - -Werror
     dependencies:
       - clickhouse-driver

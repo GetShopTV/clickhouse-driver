@@ -6,7 +6,7 @@ module Database.Clickhouse.Conversion.Types where
 import Control.Exception
 import Data.Data
 import Data.Kind
-import Database.Clickhouse.Types
+import Database.Clickhouse.Client.Types
 
 type QueryRenderer :: Type -> Constraint
 class QueryRenderer renderer where

@@ -3,29 +3,29 @@
 module Database.Clickhouse.Conversion.Bytestring.From where
 
 import Data.ByteString
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
+import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as C8
 import Data.Time
 import Data.Time.Zones.All (tzByName)
 import Data.UUID
-import Database.Clickhouse.Types
+import Database.Clickhouse.Client.Types
 import GHC.Int
 import GHC.Word
 
 data TypeValuePairBS = TypeValuePairBS
-  { strType :: !ByteString,
-    strValue :: !ByteString
+  { strType :: !ByteString
+  , strValue :: !ByteString
   }
 
 bsDropEnd :: Int -> ByteString -> ByteString
 bsDropEnd n xs = BS.take (BS.length xs - n) xs
 
 readNullable :: ByteString -> ByteString -> ClickhouseType
-readNullable spec bs = if bs == "\\N" then ClickNull else converter bs
-  where
-    -- Remove beginning "Nullable(" and trailing ")"
-    cktype = BS.drop 9 . bsDropEnd 1 $ spec
-    converter = bsToClickhouseType cktype
+readNullable spec bs = if bs == "\\N" then ClickNullable Nothing else ClickNullable . Just $ converter bs
+ where
+  -- Remove beginning "Nullable(" and trailing ")"
+  cktype = BS.drop 9 . bsDropEnd 1 $ spec
+  converter = bsToClickhouseType cktype
 
 readString :: ByteString -> ClickhouseType
 readString = ClickString -- . unescape
@@ -49,23 +49,23 @@ readUUID bs = ClickUUID . read @UUID $ C8.unpack bs
 -- TODO: Better handling of errors
 readDate :: ByteString -> ClickhouseType
 readDate bs = ClickDate $ parseTimeOrError True defaultTimeLocale format $ C8.unpack bs
-  where
-    -- like "2021-12-17"
-    format = "%Y-%0m-%0d"
+ where
+  -- like "2021-12-17"
+  format = "%Y-%0m-%0d"
 
 readDateTime :: ByteString -> ByteString -> ClickhouseType
 readDateTime spec = readDateTimeUTC
-  where
-    -- Extract inner time zone from string like DateTime(\'Europe/Moscow\')
-    _innerSpec = BS.drop 11 . bsDropEnd 3 $ spec
-    _timeZone = tzByName _innerSpec
+ where
+  -- Extract inner time zone from string like DateTime(\'Europe/Moscow\')
+  _innerSpec = BS.drop 11 . bsDropEnd 3 $ spec
+  _timeZone = tzByName _innerSpec
 
 -- TODO: Handle timezone correctly
 readDateTimeUTC :: ByteString -> ClickhouseType
 readDateTimeUTC bs = ClickDateTime $ parseTimeOrError @UTCTime True defaultTimeLocale format $ C8.unpack bs
-  where
-    -- like "2021-12-03 15:03:45.302880179"
-    format = "%Y-%0m-%0d %H:%M:%S%Q"
+ where
+  -- like "2021-12-03 15:03:45.302880179"
+  format = "%Y-%0m-%0d %H:%M:%S%Q"
 
 readIntColumn :: ByteString -> ByteString -> ClickhouseType
 readIntColumn "Int8" bs = ClickInt8 . read @Int8 $ C8.unpack bs
@@ -95,5 +95,5 @@ bsToClickhouseType chType
   | "UUID" `isPrefixOf` chType = readUUID
   | "Float" `isPrefixOf` chType = readFloatColumn chType
   | "LowCardinality(String)" `isPrefixOf` chType = readLowCardinalityString
-  | "FixedString(2)" `isPrefixOf` chType = readString
-  | otherwise = error ("Unknown Type (please implement conversion from bytestring to ClickhouseType): " ++ C8.unpack chType)
+  | "FixedString" `isPrefixOf` chType = readString
+  | otherwise = error $ "Unknown Type (please implement conversion from bytestring to ClickhouseType): " <> C8.unpack chType
