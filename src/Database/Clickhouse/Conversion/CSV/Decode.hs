@@ -29,7 +29,7 @@ decodeToClickhouseRowsC =
                   toClickhouseType' !strType !strValue = bsToClickhouseType strType strValue
                   converters = V.map toClickhouseType' colTypes
               mapC (V.zipWith ($) converters)
-            _ -> error "Failed due to returned CSV row count lesser than at least 2 (column names and types)."
+            _ -> error $ "Failed due to returned CSV row count lesser than at least 2 (column names and types). Error: " <> show _colNames'
     )
     >>= \case
       Left cpe -> error $ "Failed to decode CSV: " <> show cpe
