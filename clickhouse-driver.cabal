@@ -32,7 +32,6 @@ library
       Database.Clickhouse.Conversion.CSV.Decode
       Database.Clickhouse.Conversion.CSV.Orphans
       Database.Clickhouse.Conversion.CSV.Renderer
-      Database.Clickhouse.Conversion.FromClickhouse
       Database.Clickhouse.Conversion.PreparedQuery
       Database.Clickhouse.Conversion.ToClickhouse
       Database.Clickhouse.Conversion.Types
