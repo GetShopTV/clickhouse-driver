@@ -30,8 +30,11 @@ readNullable spec bs = if bs == "\\N" then ClickNull else converter bs
 readString :: ByteString -> ClickhouseType
 readString = ClickString -- . unescape
 
-readLowCardinalityString :: ByteString -> ClickhouseType
-readLowCardinalityString = ClickString
+readLowCardinality :: ByteString -> ByteString -> ClickhouseType
+readLowCardinality spec = bsToClickhouseType cktype
+ where
+  -- Remove beginning "LowCardinality(" and trailing ")"
+  cktype = BS.drop 15 . bsDropEnd 1 $ spec
 
 -- Now handled at preprocessing
 {- unescape :: ByteString -> ByteString
@@ -94,6 +97,6 @@ bsToClickhouseType chType
   | "UInt" `isPrefixOf` chType = readIntColumn chType
   | "UUID" `isPrefixOf` chType = readUUID
   | "Float" `isPrefixOf` chType = readFloatColumn chType
-  | "LowCardinality(String)" `isPrefixOf` chType = readLowCardinalityString
+  | "LowCardinality" `isPrefixOf` chType = readLowCardinality chType
   | "FixedString(2)" `isPrefixOf` chType = readString
   | otherwise = error ("Unknown Type (please implement conversion from bytestring to ClickhouseType): " ++ C8.unpack chType)
