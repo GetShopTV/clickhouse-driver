@@ -1,7 +1,0 @@
-cradle:
-  stack:
-    - path: "./src"
-      component: "clickhouse-driver:lib"
-
-    - path: "./test"
-      component: "clickhouse-driver:test:clickhouse-driver-test"

@@ -1,14 +1,14 @@
-name:                clickhouse-driver
-version:             0.1.0.0
-github:              "githubuser/clickhouse-driver"
-license:             BSD3
-author:              "Author name here"
-maintainer:          "example@example.com"
-copyright:           "2021 Author name here"
+name: clickhouse-driver
+version: 0.1.0.0
+github: "GetShopTV/clickhouse-driver"
+license: BSD3
+author: "Author name here"
+maintainer: "example@example.com"
+copyright: "2021 Author name here"
 
 extra-source-files:
-- README.md
-- ChangeLog.md
+  - README.md
+  - ChangeLog.md
 
 # Metadata used when publishing your package
 # synopsis:            Short description of your package
@@ -17,32 +17,14 @@ extra-source-files:
 # To avoid duplicated efforts in documentation and dealing with the
 # complications of embedding Haddock markup inside cabal files, it is
 # common to point users to the README.md file.
-description:         Please see the README on GitHub at <https://github.com/githubuser/clickhouse-driver#readme>
+description: Please see the README on GitHub at <https://github.com/githubuser/clickhouse-driver#readme>
 
-dependencies:
-- base >= 4.7 && < 5
-- data-dword
-- bytestring
-- data-default
-- uuid
-- vector
-- time
-- text
-- string-conversions
-- req
-- iproute
-- exceptions
-- binary
-- mtl
-- cassava
-- tz
-- replace-attoparsec
-- attoparsec
-- case-insensitive
+ghc-options:
+  - -Wall
+  - -Wincomplete-patterns
 
-library:
-  source-dirs: src
-  default-extensions:
+default-extensions:
+  - UndecidableInstances
   - OverloadedStrings
   - TypeOperators
   - TypeApplications
@@ -61,19 +43,58 @@ library:
   - OverloadedLabels
   - DuplicateRecordFields
   - PolyKinds
-  ghc-options:
-    - -Wall 
-    - -Werror
+  - ImportQualifiedPost
+
+dependencies:
+  - base >= 4.7 && < 5
+  - data-dword
+  - bytestring
+  - data-default
+  - uuid
+  - vector
+  - time
+  - text
+  - string-conversions
+  - http-conduit
+  - http-client
+  - http-client-tls
+  - resourcet
+  - conduit
+  - conduit-extra
+  - iproute
+  - exceptions
+  - binary
+  - mtl
+  - cassava
+  - cassava-conduit
+  - tz
+  - case-insensitive
+  - aeson
+  - safe-decimal
+
+library:
+  source-dirs: src
+
+executables:
+  clickhouse-driver-example:
+    main: Main.hs
+    source-dirs: example
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - clickhouse-driver
+      - PyF
+      - template-haskell
 
 tests:
   clickhouse-driver-test:
-    main:                Spec.hs
-    source-dirs:         test
+    main: Spec.hs
+    source-dirs: test
     ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    - -Wall 
-    - -Werror
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
     dependencies:
-    - clickhouse-driver
+      - clickhouse-driver

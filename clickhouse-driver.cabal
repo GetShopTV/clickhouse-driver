@@ -1,14 +1,14 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.34.6.
+-- This file has been generated from package.yaml by hpack version 0.35.0.
 --
 -- see: https://github.com/sol/hpack
 
 name:           clickhouse-driver
 version:        0.1.0.0
 description:    Please see the README on GitHub at <https://github.com/githubuser/clickhouse-driver#readme>
-homepage:       https://github.com/githubuser/clickhouse-driver#readme
-bug-reports:    https://github.com/githubuser/clickhouse-driver/issues
+homepage:       https://github.com/GetShopTV/clickhouse-driver#readme
+bug-reports:    https://github.com/GetShopTV/clickhouse-driver/issues
 author:         Author name here
 maintainer:     example@example.com
 copyright:      2021 Author name here
@@ -20,31 +20,27 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/clickhouse-driver
+  location: https://github.com/GetShopTV/clickhouse-driver
 
 library
   exposed-modules:
       Database.ClickHouse
       Database.Clickhouse.Client.HTTP.Client
-      Database.Clickhouse.Client.HTTP.Simple
       Database.Clickhouse.Client.HTTP.Types
+      Database.Clickhouse.Client.Types
       Database.Clickhouse.Conversion.Bytestring.From
-      Database.Clickhouse.Conversion.Bytestring.To
-      Database.Clickhouse.Conversion.FromClickhouse
-      Database.Clickhouse.Conversion.Generic.ClickRep
+      Database.Clickhouse.Conversion.CSV.Decode
+      Database.Clickhouse.Conversion.CSV.Orphans
+      Database.Clickhouse.Conversion.CSV.Renderer
+      Database.Clickhouse.Conversion.PreparedQuery
       Database.Clickhouse.Conversion.ToClickhouse
-      Database.Clickhouse.Conversion.TSV.From
-      Database.Clickhouse.Conversion.TSV.Renderer
-      Database.Clickhouse.Conversion.TSV.To
-      Database.Clickhouse.Conversion.TSV.Types
       Database.Clickhouse.Conversion.Types
-      Database.Clickhouse.Conversion.Values.Renderer
-      Database.Clickhouse.Types
   other-modules:
       Paths_clickhouse_driver
   hs-source-dirs:
       src
   default-extensions:
+      UndecidableInstances
       OverloadedStrings
       TypeOperators
       TypeApplications
@@ -63,22 +59,89 @@ library
       OverloadedLabels
       DuplicateRecordFields
       PolyKinds
-  ghc-options: -Wall -Werror
+      ImportQualifiedPost
+  ghc-options: -Wall -Wincomplete-patterns
   build-depends:
-      attoparsec
+      aeson
     , base >=4.7 && <5
     , binary
     , bytestring
     , case-insensitive
     , cassava
+    , cassava-conduit
+    , conduit
+    , conduit-extra
     , data-default
     , data-dword
     , exceptions
+    , http-client
+    , http-client-tls
+    , http-conduit
     , iproute
     , mtl
-    , replace-attoparsec
-    , req
+    , resourcet
+    , safe-decimal
     , string-conversions
+    , text
+    , time
+    , tz
+    , uuid
+    , vector
+  default-language: Haskell2010
+
+executable clickhouse-driver-example
+  main-is: Main.hs
+  other-modules:
+      CustomQQ
+      Paths_clickhouse_driver
+  hs-source-dirs:
+      example
+  default-extensions:
+      UndecidableInstances
+      OverloadedStrings
+      TypeOperators
+      TypeApplications
+      TypeFamilies
+      DataKinds
+      FunctionalDependencies
+      LambdaCase
+      NamedFieldPuns
+      ViewPatterns
+      PatternSynonyms
+      GADTs
+      DeriveGeneric
+      DeriveAnyClass
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      OverloadedLabels
+      DuplicateRecordFields
+      PolyKinds
+      ImportQualifiedPost
+  ghc-options: -Wall -Wincomplete-patterns -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      PyF
+    , aeson
+    , base >=4.7 && <5
+    , binary
+    , bytestring
+    , case-insensitive
+    , cassava
+    , cassava-conduit
+    , clickhouse-driver
+    , conduit
+    , conduit-extra
+    , data-default
+    , data-dword
+    , exceptions
+    , http-client
+    , http-client-tls
+    , http-conduit
+    , iproute
+    , mtl
+    , resourcet
+    , safe-decimal
+    , string-conversions
+    , template-haskell
     , text
     , time
     , tz
@@ -93,22 +156,49 @@ test-suite clickhouse-driver-test
       Paths_clickhouse_driver
   hs-source-dirs:
       test
-  ghc-options: -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+  default-extensions:
+      UndecidableInstances
+      OverloadedStrings
+      TypeOperators
+      TypeApplications
+      TypeFamilies
+      DataKinds
+      FunctionalDependencies
+      LambdaCase
+      NamedFieldPuns
+      ViewPatterns
+      PatternSynonyms
+      GADTs
+      DeriveGeneric
+      DeriveAnyClass
+      DerivingStrategies
+      GeneralizedNewtypeDeriving
+      OverloadedLabels
+      DuplicateRecordFields
+      PolyKinds
+      ImportQualifiedPost
+  ghc-options: -Wall -Wincomplete-patterns -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      attoparsec
+      aeson
     , base >=4.7 && <5
     , binary
     , bytestring
     , case-insensitive
     , cassava
+    , cassava-conduit
     , clickhouse-driver
+    , conduit
+    , conduit-extra
     , data-default
     , data-dword
     , exceptions
+    , http-client
+    , http-client-tls
+    , http-conduit
     , iproute
     , mtl
-    , replace-attoparsec
-    , req
+    , resourcet
+    , safe-decimal
     , string-conversions
     , text
     , time
