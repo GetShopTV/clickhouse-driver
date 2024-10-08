@@ -26,57 +26,59 @@ type ClientHTTP :: Type
 data ClientHTTP
 
 instance ClickhouseClient ClientHTTP where
-  type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPSettings
-  sendSource settings query = do
-    mkClickHouseRequestSource settings query
+    type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPSettings
+    sendSource settings query = do
+        mkClickHouseRequestSource settings query
 
 instance ClickhouseClientAcquire ClientHTTP where
-  sendSourceAcquire settings query = do
-    mkClickHouseRequestSourceAсquire settings query
+    sendSourceAcquire settings query = do
+        mkClickHouseRequestSourceAсquire settings query
 
 mkClickHouseRequestSource ::
-  MonadResource m =>
-  ClickhouseConnectionSettings ClientHTTP ->
-  Query ->
-  ConduitM i ByteString m ()
+    (MonadResource m) =>
+    ClickhouseConnectionSettings ClientHTTP ->
+    Query ->
+    ConduitM i ByteString m ()
 mkClickHouseRequestSource settings (Query query) = httpSource chRequest getResponseBody
- where
-  ClickhouseHTTPSettings{..} = connectionSettings settings
-  chRequest =
-    fromString clickhouseUrl
-      & setRequestBody (requestBodySourceChunked query)
-      & setRequestHeaders (chDefaultHeadersKV settings)
-      & setRequestPort port
-      & setRequestMethod "POST"
+  where
+    ClickhouseHTTPSettings{..} = connectionSettings settings
+    chRequest =
+        fromString clickhouseUrl
+            & setRequestBody (requestBodySourceChunked query)
+            & setRequestHeaders (chDefaultHeadersKV settings)
+            & setRequestPort port
+            & setRequestMethod "POST"
+            & setRequestResponseTimeout responseTimeout
 
-mkClickHouseRequestSourceAсquire :: MonadIO m => ClickhouseConnectionSettings ClientHTTP -> Query -> Acquire (ConduitM i ByteString m ())
+mkClickHouseRequestSourceAсquire :: (MonadIO m) => ClickhouseConnectionSettings ClientHTTP -> Query -> Acquire (ConduitM i ByteString m ())
 mkClickHouseRequestSourceAсquire settings (Query query) = httpSourceA chRequest getResponseBody
- where
-  ClickhouseHTTPSettings{..} = connectionSettings settings
-  chRequest =
-    fromString clickhouseUrl
-      & setRequestBody (requestBodySourceChunked query)
-      & setRequestHeaders (chDefaultHeadersKV settings)
-      & setRequestPort port
-      & setRequestMethod "POST"
+  where
+    ClickhouseHTTPSettings{..} = connectionSettings settings
+    chRequest =
+        fromString clickhouseUrl
+            & setRequestBody (requestBodySourceChunked query)
+            & setRequestHeaders (chDefaultHeadersKV settings)
+            & setRequestPort port
+            & setRequestMethod "POST"
+            & setRequestResponseTimeout responseTimeout
 
 chDefaultHeadersKV :: ClickhouseConnectionSettings ClientHTTP -> RequestHeaders
 chDefaultHeadersKV ClickhouseConnectionSettings{..} =
-  [ ("X-ClickHouse-User", cs username)
-  , ("X-ClickHouse-Key", cs password)
-  , -- Used only when selecting data
-    ("X-ClickHouse-Format", "CSVWithNamesAndTypes")
-  , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
-  ]
+    [ ("X-ClickHouse-User", cs username)
+    , ("X-ClickHouse-Key", cs password)
+    , -- Used only when selecting data
+      ("X-ClickHouse-Format", "CSVWithNamesAndTypes")
+    , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
+    ]
 
 httpSourceA ::
-  (MonadIO n) =>
-  H.Request ->
-  ( H.Response (ConduitM i ByteString n ()) ->
-    ConduitM i o m r
-  ) ->
-  Acquire (ConduitM i o m r)
+    (MonadIO n) =>
+    H.Request ->
+    ( H.Response (ConduitM i ByteString n ()) ->
+      ConduitM i o m r
+    ) ->
+    Acquire (ConduitM i o m r)
 httpSourceA req withRes = do
-  man <- liftIO H.getGlobalManager
-  let ack = mkAcquire (H.responseOpen req man) H.responseClose
-  withRes . fmap bodyReaderSource <$> ack
+    man <- liftIO H.getGlobalManager
+    let ack = mkAcquire (H.responseOpen req man) H.responseClose
+    withRes . fmap bodyReaderSource <$> ack
