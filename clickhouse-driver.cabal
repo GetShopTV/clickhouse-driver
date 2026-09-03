@@ -29,6 +29,7 @@ library
   build-depends:
       aeson
     , base          >=4.18 && <5
+    , binary
     , bytestring
     , conduit
     , hcurl

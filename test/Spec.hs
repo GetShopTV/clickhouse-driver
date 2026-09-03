@@ -11,7 +11,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BSL
-import Data.Conduit (ConduitT, await, runConduit, yield, (.|))
+import Data.Conduit (runConduit, (.|))
+import Data.Conduit.Combinators (sinkList)
+import Data.Conduit.List (sourceList)
 import Data.List (isInfixOf)
 import Data.Ratio ((%))
 import Data.Time.Calendar (fromGregorian)
@@ -104,7 +106,7 @@ checks =
         Right _ -> Left "expected Point to be rejected"
   , checkIO "streaming decode across chunk boundaries matches buffer decode" $ do
       let buffer = makeBuffer columnNames typeNames rows
-      streamed <- runResourceT (runConduit (sourceChunks (chunksOf 7 buffer) .| decodeRowBinaryC .| collect))
+      streamed <- runResourceT (runConduit (sourceList (chunksOf 7 buffer) .| decodeRowBinaryC .| sinkList))
       case decodeRowBinaryBuffer buffer of
         Left err -> pure (Left ("reference decode failed: " <> err))
         Right reference ->
@@ -261,16 +263,6 @@ chunksOf size bytes
   | otherwise =
       let (head', tail') = BS.splitAt size bytes
        in head' : chunksOf size tail'
-
-sourceChunks :: Monad m => [ByteString] -> ConduitT i ByteString m ()
-sourceChunks = mapM_ yield
-
-collect :: Monad m => ConduitT a o m [a]
-collect = go []
-  where
-    go acc = await >>= \case
-      Nothing -> pure (reverse acc)
-      Just value -> go (value : acc)
 
 runAll :: [Check] -> IO [(String, Either String ())]
 runAll = mapM (\(name, action) -> (name,) <$> action)

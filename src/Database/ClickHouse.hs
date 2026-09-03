@@ -44,7 +44,8 @@ module Database.ClickHouse
 
 import Control.Monad.Trans.Resource (MonadResource, runResourceT)
 import Data.ByteString (ByteString)
-import Data.Conduit (ConduitT, await, awaitForever, runConduit, (.|))
+import Data.Conduit (ConduitT, runConduit, (.|))
+import Data.Conduit.Combinators (sinkList, sinkNull)
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Text
 import Data.Vector (Vector)
@@ -94,7 +95,7 @@ runQuery ::
   IO (Vector (Vector ClickhouseType))
 runQuery settings sql =
   Vector.fromList
-    <$> runResourceT (runConduit (sourceQuery settings sql .| collect))
+    <$> runResourceT (runConduit (sourceQuery settings sql .| sinkList))
 
 -- | Run a query with external tables attached and collect every row.
 runQueryWithExternals ::
@@ -104,7 +105,7 @@ runQueryWithExternals ::
   IO (Vector (Vector ClickhouseType))
 runQueryWithExternals settings externals sql =
   Vector.fromList
-    <$> runResourceT (runConduit (sourceQueryWithExternals settings externals sql .| collect))
+    <$> runResourceT (runConduit (sourceQueryWithExternals settings externals sql .| sinkList))
 
 -- | Insert rows into a table.
 --
@@ -121,7 +122,7 @@ runInsert settings table columns rows = do
   let statement = Text.encodeUtf8 (renderInsertStatement table columns)
       payload = encodeRows (map Vector.fromList rows)
   runResourceT $
-    runConduit (sendSource settings (insertRequest statement payload) .| drain)
+    runConduit (sendSource settings (insertRequest statement payload) .| sinkNull)
 
 -- | Run a statement and discard its output (DDL, INSERT without collecting
 -- the result, SET, ...).  Server side errors still throw.
@@ -131,14 +132,4 @@ runCommand ::
   IO ()
 runCommand settings sql =
   runResourceT $
-    runConduit (sendSource settings (commandRequest sql) .| drain)
-
-collect :: Monad m => ConduitT a o m [a]
-collect = go []
-  where
-    go acc = await >>= \case
-      Nothing -> pure (reverse acc)
-      Just value -> go (value : acc)
-
-drain :: Monad m => ConduitT i o m ()
-drain = awaitForever (\_ -> pure ())
+    runConduit (sendSource settings (commandRequest sql) .| sinkNull)

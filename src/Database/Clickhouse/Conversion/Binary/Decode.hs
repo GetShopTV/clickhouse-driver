@@ -23,9 +23,19 @@ import Control.Exception (throwIO)
 import Control.Monad (replicateM)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Aeson qualified as Aeson
+import Data.Binary.Get
+  ( Get
+  , getDoublele
+  , getFloatle
+  , getWord16le
+  , getWord32le
+  , getWord64le
+  , runGet
+  )
 import Data.Bits (shiftL, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as BSL
 import Data.Conduit (ConduitT, await, yield)
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Time (Day, UTCTime)
@@ -45,7 +55,6 @@ import Database.Clickhouse.Conversion.Types
   , decimalWidthBytes
   , parseChType
   )
-import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 
 -- | Result of running a parser over the bytes available so far.
 data PResult a
@@ -92,41 +101,25 @@ pWord8 = pNeed 1 (\bs -> BS.index bs 0)
 pInt8 :: P Int8
 pInt8 = fromIntegral <$> pWord8
 
+-- | Decode a fixed-width little-endian value with the @binary@ package; the
+-- buffer length is checked first so 'runGet' never sees truncated input.
+pLE :: Int -> Get a -> P a
+pLE n getter = pNeed n (runGet getter . BSL.fromStrict)
+
 pWord16le :: P Word16
-pWord16le =
-  pNeed 2 $ \bs ->
-    fromIntegral (BS.index bs 0)
-      .|. (fromIntegral (BS.index bs 1) `shiftL` 8)
+pWord16le = pLE 2 getWord16le
 
 pInt16le :: P Int16
 pInt16le = fromIntegral <$> pWord16le
 
 pWord32le :: P Word32
-pWord32le =
-  pNeed 4 $ \bs ->
-    foldWord32
-      [ BS.index bs 0
-      , BS.index bs 1
-      , BS.index bs 2
-      , BS.index bs 3
-      ]
+pWord32le = pLE 4 getWord32le
 
 pInt32le :: P Int32
 pInt32le = fromIntegral <$> pWord32le
 
 pWord64le :: P Word64
-pWord64le =
-  pNeed 8 $ \bs ->
-    foldWord64
-      [ BS.index bs 0
-      , BS.index bs 1
-      , BS.index bs 2
-      , BS.index bs 3
-      , BS.index bs 4
-      , BS.index bs 5
-      , BS.index bs 6
-      , BS.index bs 7
-      ]
+pWord64le = pLE 8 getWord64le
 
 pInt64le :: P Int64
 pInt64le = fromIntegral <$> pWord64le
@@ -148,10 +141,10 @@ pFixedSigned widthBytes = do
   pure (if raw >= modulus `div` 2 then raw - modulus else raw)
 
 pFloat32le :: P Float
-pFloat32le = castWord32ToFloat <$> pWord32le
+pFloat32le = pLE 4 getFloatle
 
 pFloat64le :: P Double
-pFloat64le = castWord64ToDouble <$> pWord64le
+pFloat64le = pLE 8 getDoublele
 
 pBytes :: Int -> P ByteString
 pBytes n = pNeed n (BS.take n)
@@ -175,20 +168,6 @@ pLEB128 = P $ go 0 0
 
 pFail :: String -> P a
 pFail message = P (const (PFail message))
-
-foldWord32 :: [Word8] -> Word32
-foldWord32 = go 0 0
-  where
-    go !acc _ [] = acc
-    go !acc !shift (w : ws) =
-      go (acc .|. (fromIntegral w `shiftL` shift)) (shift + 8) ws
-
-foldWord64 :: [Word8] -> Word64
-foldWord64 = go 0 0
-  where
-    go !acc _ [] = acc
-    go !acc !shift (w : ws) =
-      go (acc .|. (fromIntegral w `shiftL` shift)) (shift + 8) ws
 
 -- | Decode one column according to its type.
 decodeValue :: ChType -> P ClickhouseType

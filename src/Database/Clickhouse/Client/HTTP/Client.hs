@@ -174,17 +174,18 @@ buildHCurlRequest ::
 buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
   case requestExternals of
     [] -> pure (makeRequest requestBody authAndFormatHeaders)
-    _ -> do
-      whenJust requestData $ \_ ->
+    _ -> case requestData of
+      Just _ ->
         error "external tables cannot be combined with an INSERT payload"
-      boundary <- mkBoundary
-      let multipartHeaders =
-            authAndFormatHeaders
-              <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
-      pure $
-        makeRequest
-          (CurlTypes.Buffer (multipartBody boundary multipartFields))
-          multipartHeaders
+      Nothing -> do
+        boundary <- mkBoundary
+        let multipartHeaders =
+              authAndFormatHeaders
+                <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
+        pure $
+          makeRequest
+            (CurlTypes.Buffer (multipartBody boundary multipartFields))
+            multipartHeaders
   where
     httpOptions = transportOptions connectionSettings
     endpoint =
@@ -270,10 +271,6 @@ multipartBody boundary fields =
         <> byteString fieldContent
         <> byteString "\r\n"
     closing b = byteString ("--" <> b <> "--\r\n")
-
-whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
-whenJust (Just a) f = f a
-whenJust Nothing _ = pure ()
 
 encodeUtf8Show :: Show a => a -> ByteString
 encodeUtf8Show = TE.encodeUtf8 . Text.pack . show
