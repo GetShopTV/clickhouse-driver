@@ -7,9 +7,10 @@
 {- |
 ClickHouse transport implemented on top of hcurl (libcurl multi interface).
 
-The client keeps a single process-wide curl agent, created lazily on first
-use.  Requests are plain HTTP POSTs; responses are consumed as a streaming
-'BodyReader' and yielded chunk by chunk by the conduit.
+Unless a custom agent is provided in 'ClickhouseHTTPSettings', the client
+uses a single process-wide curl agent created lazily on first use.  Requests
+are plain HTTP POSTs; responses are consumed as a streaming 'BodyReader' and
+yielded chunk by chunk by the conduit.
 
 Error reporting:
 
@@ -65,8 +66,9 @@ sendSourceHTTP ::
   CHRequest ->
   ConduitT i ByteString m ()
 sendSourceHTTP settings request = do
+  let agent = maybe processAgent id (httpAgent (connectionSettings settings))
   outcome <-
-    lift $ CurlStream.httpStreaming processAgent (buildHCurlRequest settings request)
+    lift $ CurlStream.httpStreaming agent (buildHCurlRequest settings request)
   case outcome of
     Left code -> liftIO $ throwIO $ ClickhouseTransportException (show code)
     Right StreamingResponse {info = HttpParts {statusCode}, body = reader, completion} ->

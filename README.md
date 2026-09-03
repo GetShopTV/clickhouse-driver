@@ -41,6 +41,27 @@ Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
 row at a time. Plain helpers `runQuery`, `runInsert`, `runCommand` wrap the
 conduit for simple use.
 
+## hcurl agent
+
+By default the driver lazily creates one process-wide hcurl agent
+(`defaultConfig`). To take ownership of the agent — choose between
+`spawnAgent` (single), `spawnThreadedAgent` or `spawnManagedAgent`, or set
+connection pool limits — create it yourself and pass it in
+`ClickhouseHTTPSettings.httpAgent`:
+
+```haskell
+import HCurl.Agent (spawnManagedAgent, ManagedPolicy)
+import HCurl.Simple (initCurl)
+
+main :: IO ()
+main = do
+  initCurl -- required when providing a custom agent
+  agent <- spawnManagedAgent policy HCurl.Types.defaultConfig
+  let settings = defaultHTTPSettings { httpAgent = Just agent }
+```
+
+The custom agent is then used for every request made with those settings.
+
 ## Integration harness
 
 `cabal run exe:clickhouse-driver-example` exercises the driver against a live
