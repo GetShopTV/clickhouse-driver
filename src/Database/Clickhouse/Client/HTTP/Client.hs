@@ -7,10 +7,9 @@
 {- |
 ClickHouse transport implemented on top of hcurl (libcurl multi interface).
 
-The client keeps a single process-wide curl agent (created lazily on first
-use, mirroring how @http-client@ manages its global manager).  Requests are
-plain HTTP POSTs; responses are consumed as a streaming 'BodyReader' and
-yielded chunk by chunk by the conduit.
+The client keeps a single process-wide curl agent, created lazily on first
+use.  Requests are plain HTTP POSTs; responses are consumed as a streaming
+'BodyReader' and yielded chunk by chunk by the conduit.
 
 Error reporting:
 

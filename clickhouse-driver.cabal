@@ -7,8 +7,6 @@ description:
   interface).  Query results and inserts use the binary @RowBinary@ /
   @RowBinaryWithNamesAndTypes@ wire format.
 license:            BSD-3-Clause
-author:             GetShopTV
-maintainer:         example@example.com
 build-type:         Simple
 extra-source-files:
     README.md
@@ -74,7 +72,6 @@ test-suite clickhouse-driver-test
     , clickhouse-driver
     , conduit
     , resourcet
-    , text
     , time
     , uuid
     , vector
