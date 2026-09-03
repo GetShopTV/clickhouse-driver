@@ -1,92 +1,212 @@
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
-module Main where
+{- |
+Integration harness against a live ClickHouse server.
 
-import Conduit
-import CustomQQ
-import Data.Aeson qualified as Aeson
-import Data.Default
-import Data.Maybe
-import Data.Vector
-import Database.Clickhouse.Client.HTTP.Client (ClientHTTP)
-import Database.Clickhouse.Client.Types
-import Database.Clickhouse.Conversion.CSV.Decode
-import Database.Clickhouse.Conversion.CSV.Renderer
-import Database.Clickhouse.Conversion.Types
-import PyF
+Configuration is read from the environment (all optional):
 
-chHttpSettings :: ClickhouseConnectionSettings ClientHTTP
-chHttpSettings = def{password = "password"}
+  * @CH_URL@      scheme + host, default @http:\/\/localhost@
+  * @CH_PORT@     port, default @8123@
+  * @CH_DATABASE@ database, default @default@
+  * @CH_USER@     user, default @default@
+  * @CH_PASSWORD@ password, default empty
 
-testInsertCSVQuery :: String -> CSVQuery
-testInsertCSVQuery tbl =
-    CSVQuery
-        [fmt|
-INSERT
-INTO {tbl}
-FORMAT CSV
-|]
+The run prints a human readable transcript.  Every verification failure
+aborts with a non-zero exit code.
+-}
+module Main (main) where
 
-json :: Aeson.Value
-json =
-    fromJust . Aeson.decode $
-        [customFmt|\
-{"name":"Muhammad Ishaq","gender":"Male","age":23,"address":{"street":"87","city":"Gultari Matyal Skardu","state":"Gilgit Baltistan","postalCode":"16350"},"phoneNumber":[{"type":"personal","number":"116263747"}]}
-|]
+import Control.Exception (SomeException, displayException, try)
+import Control.Monad (forM_, unless)
+import Data.ByteString.Char8 qualified as ByteString
+import Data.List (intercalate)
+import Data.Ratio ((%))
+import Data.Text qualified as Text
+import Data.Time.Calendar (fromGregorian)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.UUID (fromWords64)
+import Data.Vector (Vector)
+import Data.Vector qualified as Vector
+import Database.ClickHouse
+import System.Environment (lookupEnv)
+import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 
-testInsertQueryVals :: [ClickhouseType]
-testInsertQueryVals =
-    [ ClickInt32 1234
-    , ClickJSON json
-    ]
-
-testInsertQuery :: String -> [[ClickhouseType]] -> Query
-testInsertQuery tbl = renderRows (testInsertCSVQuery tbl)
-
-showQuery :: Query -> IO ()
-showQuery q = do
-    t <- runConduit $ runQuery q .| sinkLazy
-    print t
-
-runQueryInsert :: Query -> IO ()
-runQueryInsert q =
-    runConduitRes $
-        sendSource chHttpSettings q
-            .| mapM_C (liftIO . print)
-
-insertsMain :: IO ()
-insertsMain = do
-    {-     let queryJSON = testInsertQuery "tst_tbl" [testInsertQueryVals]
-        showQuery queryJSON
-        runQueryInsert queryJSON -}
-
-    {- let vals =
-            [ [ClickString "test1\\\\\ \\" \\ \"", ClickInt32 300]
-            ] -}
-    let vals =
-            [ [ClickString "hello worldy\n \t", ClickInt32 100]
-            , [ClickString "another string", ClickInt32 200]
-            ]
-    let queryTxtMultiple = testInsertQuery "strtbl" vals
-    showQuery queryTxtMultiple
-    runQueryInsert queryTxtMultiple
-
-runQuerySelect :: MonadUnliftIO m => Query -> m [Vector ClickhouseType]
-runQuerySelect q =
-    runConduitRes $
-        sendSource chHttpSettings q
-            .| decodeToClickhouseRowsC
-            .| sinkList
-
-selectsMain :: IO ()
-selectsMain = do
-    let selectQ =
-            [fmt|\
-SELECT * FROM strtbl
-|]
-    print =<< runQuerySelect selectQ
+settingsFromEnv :: IO (ClickhouseConnectionSettings ClientHTTP)
+settingsFromEnv = do
+  url <- maybe "http://localhost" id <$> lookupEnv "CH_URL"
+  rawPort <- lookupEnv "CH_PORT"
+  databaseText <- maybe "default" id <$> lookupEnv "CH_DATABASE"
+  user <- maybe "default" id <$> lookupEnv "CH_USER"
+  password <- maybe "" id <$> lookupEnv "CH_PASSWORD"
+  let port = maybe 8123 read rawPort
+  pure $
+    (defaultConnection transport)
+      { username = Text.pack user
+      , password = Text.pack password
+      , database = Text.pack databaseText
+      , connectionSettings =
+          transport {clickhouseUrl = ByteString.pack url, port}
+      }
+  where
+    transport = defaultHTTPSettings
 
 main :: IO ()
 main = do
-    --insertsMain
-    selectsMain
+  settings <- settingsFromEnv
+  outcome <- try (run settings)
+  case outcome of
+    Left (exception :: SomeException) -> do
+      hPutStrLn stderr ("integration test failed: " <> displayException exception)
+      exitFailure
+    Right () -> pure ()
+
+run :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+run settings = do
+  putStrLn "== clickhouse-driver integration run =="
+  versionRows <- runQuery settings "SELECT version()"
+  let version = showCell (Vector.head (Vector.head versionRows))
+  putStrLn ("server version: " <> version)
+
+  basic settings
+  wideTypes settings
+  putStrLn "integration run finished"
+
+basic :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+basic settings = do
+  runCommand settings "DROP TABLE IF EXISTS driver_it"
+  runCommand
+    settings
+    "CREATE TABLE driver_it (id UInt64, name String, value Float64, flag Bool, at DateTime, tags Array(String)) ENGINE = Memory"
+  putStrLn "created table driver_it"
+
+  let basicRows =
+        [ [ ClickUInt64 1
+          , ClickString "one"
+          , ClickFloat64 1.5
+          , ClickBool True
+          , ClickDateTime (posixSecondsToUTCTime 1_600_000_000)
+          , ClickArray (Vector.fromList [ClickString "a", ClickString "b"])
+          ]
+        , [ ClickUInt64 2
+          , ClickString "two"
+          , ClickFloat64 2.5
+          , ClickBool False
+          , ClickDateTime (posixSecondsToUTCTime 1_600_000_001)
+          , ClickArray (Vector.fromList [ClickString "c"])
+          ]
+        ]
+  runInsert settings "driver_it" ["id", "name", "value", "flag", "at", "tags"] basicRows
+  putStrLn "inserted 2 rows (RowBinary)"
+
+  rows <- runQuery settings "SELECT id, name, value, flag, at, tags FROM driver_it ORDER BY id"
+  putStrLn ("queried back " <> show (Vector.length rows) <> " rows")
+  forM_ rows (putStrLn . renderRow)
+  verifyEqual "basic round trip" (map Vector.fromList basicRows) (Vector.toList rows)
+  putStrLn "ok: values round-tripped through the live server"
+
+  streamed <- runQuery settings "SELECT id, name FROM driver_it ORDER BY id"
+  unless (Vector.length streamed == 2) (fail "streaming select returned wrong row count")
+  putStrLn "ok: streaming query returned rows"
+
+  runCommand settings "DROP TABLE driver_it"
+  putStrLn "cleaned up"
+
+wideTypes :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+wideTypes settings = do
+  runCommand settings "DROP TABLE IF EXISTS driver_it_types"
+  runCommand
+    settings
+    "CREATE TABLE driver_it_types (id UInt64, d Date, d32 Date32, dt DateTime, dt64 DateTime64(3), u UUID, dec Decimal(18, 4), nu Nullable(String), arr Array(UInt16), mp Map(String, UInt8), tp Tuple(Int8, String), fx FixedString(5), b Bool, f Float64) ENGINE = Memory"
+  putStrLn "created table driver_it_types"
+
+  let typeRows =
+        [ [ ClickUInt64 1
+          , ClickDate (fromGregorian 2024 2 29)
+          , ClickDate32 (fromGregorian 1969 12 31)
+          , ClickDateTime (posixSecondsToUTCTime 1_600_000_000)
+          , ClickDateTime64 3 (posixSecondsToUTCTime (fromRational (1_638_543_825_123 % 1000)))
+          , ClickUuid (fromWords64 0x550E8400E29B41D4 0xA716446655440000)
+          , ClickDecimal64 1234567890
+          , ClickNullable (Just (ClickString "hi"))
+          , ClickArray (Vector.fromList [ClickUInt16 1, ClickUInt16 2, ClickUInt16 3])
+          , ClickMap (Vector.fromList [(ClickString "k", ClickUInt8 7)])
+          , ClickTuple (Vector.fromList [ClickInt8 (-1), ClickString "t"])
+          , ClickFixedString "hello"
+          , ClickBool True
+          , ClickFloat64 1.5
+          ]
+        , [ ClickUInt64 2
+          , ClickDate (fromGregorian 1970 1 1)
+          , ClickDate32 (fromGregorian 2024 3 1)
+          , ClickDateTime (posixSecondsToUTCTime 0)
+          , ClickDateTime64 3 (posixSecondsToUTCTime (fromRational (0 % 1)))
+          , ClickUuid (fromWords64 0 0)
+          , ClickDecimal64 0
+          , ClickNullable Nothing
+          , ClickArray Vector.empty
+          , ClickMap Vector.empty
+          , ClickTuple (Vector.fromList [ClickInt8 5, ClickString ""])
+          , ClickFixedString "ab\NUL\NULc"
+          , ClickBool False
+          , ClickFloat64 (-2.5)
+          ]
+        ]
+  runInsert
+    settings
+    "driver_it_types"
+    ["id", "d", "d32", "dt", "dt64", "u", "dec", "nu", "arr", "mp", "tp", "fx", "b", "f"]
+    typeRows
+  putStrLn "inserted 2 wide-typed rows"
+
+  wideRows <-
+    runQuery
+      settings
+      "SELECT id, d, d32, dt, dt64, u, dec, nu, arr, mp, tp, fx, b, f FROM driver_it_types ORDER BY id"
+  forM_ wideRows (putStrLn . renderRow)
+  verifyEqual "wide type round trip" (map Vector.fromList typeRows) (Vector.toList wideRows)
+
+  runCommand settings "DROP TABLE driver_it_types"
+  putStrLn "cleaned up wide table"
+
+verifyEqual :: String -> [Vector ClickhouseType] -> [Vector ClickhouseType] -> IO ()
+verifyEqual label expected actual =
+  unless (expected == actual) $
+    fail (label <> ": expected " <> show expected <> ", got " <> show actual)
+
+renderRow :: Vector ClickhouseType -> String
+renderRow row =
+  "  | " <> intercalate " | " (map showCell (Vector.toList row))
+
+showCell :: ClickhouseType -> String
+showCell = \case
+  ClickString bs -> ByteString.unpack bs
+  ClickFixedString bs -> "fx(" <> ByteString.unpack bs <> ")"
+  ClickBool b -> show b
+  ClickInt8 n -> show n
+  ClickInt16 n -> show n
+  ClickInt32 n -> show n
+  ClickInt64 n -> show n
+  ClickUInt8 n -> show n
+  ClickUInt16 n -> show n
+  ClickUInt32 n -> show n
+  ClickUInt64 n -> show n
+  ClickFloat32 f -> show f
+  ClickFloat64 d -> show d
+  ClickDate day -> show day
+  ClickDate32 day -> show day
+  ClickDateTime time -> show time
+  ClickDateTime64 _ time -> show time
+  ClickUuid uuid -> show uuid
+  ClickDecimal32 n -> show n
+  ClickDecimal64 n -> show n
+  ClickDecimal128 n -> show n
+  ClickNullable Nothing -> "NULL"
+  ClickNullable (Just value) -> showCell value
+  ClickArray values -> "[" <> intercalate ", " (map showCell (Vector.toList values)) <> "]"
+  ClickTuple values -> "(" <> intercalate ", " (map showCell (Vector.toList values)) <> ")"
+  ClickMap entries ->
+    "{"
+      <> intercalate ", " (map (\(k, v) -> showCell k <> ": " <> showCell v) (Vector.toList entries))
+      <> "}"

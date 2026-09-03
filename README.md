@@ -1,0 +1,53 @@
+# clickhouse-driver
+
+Streaming [ClickHouse](https://clickhouse.com) HTTP client for Haskell.
+
+The transport is built on [hcurl](https://github.com/Reykudo/hcurl) (libcurl
+multi interface) and the wire format is binary:
+
+* INSERT payloads are encoded as `RowBinary`;
+* SELECT responses use `RowBinaryWithNamesAndTypes` — the response header
+  carries column names and types, so rows decode into dynamically typed
+  `ClickhouseType` vectors without a client-side schema;
+* result rows are decoded and yielded incrementally (a conduit), so large
+  result sets can be consumed as a stream.
+
+## Usage
+
+```haskell
+import Database.ClickHouse
+
+main :: IO ()
+main = do
+  let conn = defaultConnection defaultHTTPSettings
+  runCommand conn "CREATE TABLE IF NOT EXISTS t (n UInt64, s String) ENGINE = Memory"
+  runInsert conn "t" ["n", "s"]
+    [ [ClickUInt64 1, ClickString "one"]
+    , [ClickUInt64 2, ClickString "two"]
+    ]
+  rows <- runQuery conn "SELECT n, s FROM t ORDER BY n"
+  print rows
+```
+
+Connection parameters come from `ClickhouseConnectionSettings`; HTTP details
+(host, port, timeouts) from `ClickhouseHTTPSettings`. The library API is
+polymorphic over a `ClickhouseClient` transport so alternative transports can
+be added later.
+
+Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
+row at a time. Plain helpers `runQuery`, `runInsert`, `runCommand` wrap the
+conduit for simple use.
+
+## Integration harness
+
+`cabal run exe:clickhouse-driver-example` exercises the driver against a live
+server; it reads `CH_URL`, `CH_PORT`, `CH_DATABASE`, `CH_USER`,
+`CH_PASSWORD` from the environment. See
+[`rollout/2026-09-03-clickhouse-local.md`](rollout/2026-09-03-clickhouse-local.md)
+for the recorded run.
+
+## Development
+
+The pinned `hcurl` revision is declared in `cabal.project`. Building requires
+libcurl/libuv development files and `c2hs` (see the rollout record for the
+exact nix environment used).

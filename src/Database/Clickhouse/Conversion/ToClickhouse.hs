@@ -1,33 +1,66 @@
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
-module Database.Clickhouse.Conversion.ToClickhouse where
+{- |
+Conversion from plain Haskell values to the dynamically typed
+'ClickhouseType'.  Rows for 'Database.ClickHouse.runInsert' can then be
+written with e.g. @map toClickhouseType@.
+-}
+module Database.Clickhouse.Conversion.ToClickhouse
+  ( ToClickhouseType (..)
+  ) where
 
-import Data.Binary
-import Data.CaseInsensitive (CI)
-import Data.CaseInsensitive qualified as CI
-import Data.String.Conversions (cs)
+import Data.ByteString (ByteString)
+import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Text (Text)
+import Data.Text.Encoding qualified as Text
 import Data.Time (Day, UTCTime)
 import Data.UUID (UUID)
-import Database.Clickhouse.Client.Types
-import Database.Clickhouse.Conversion.Bytestring.From
+import Data.Word (Word16, Word32, Word64, Word8)
+import Database.Clickhouse.Client.Types (ClickhouseType (..))
 
+-- | Values convertible to a ClickHouse column value.
 class ToClickhouseType a where
   toClickhouseType :: a -> ClickhouseType
 
-instance ToClickhouseType TypeValuePairBS where
-  toClickhouseType TypeValuePairBS{..} = bsToClickhouseType strType strValue
-
-instance (ToClickhouseType a) => ToClickhouseType (CI a) where
-  toClickhouseType = toClickhouseType @a . CI.original
-
-instance (ToClickhouseType a) => ToClickhouseType (Maybe a) where
-  toClickhouseType Nothing = ClickNullable Nothing
-  toClickhouseType (Just a) = ClickNullable . Just $ toClickhouseType a
-
 instance ToClickhouseType Text where
-  toClickhouseType txt = ClickString $ cs txt
+  toClickhouseType = ClickString . Text.encodeUtf8
+
+instance ToClickhouseType ByteString where
+  toClickhouseType = ClickString
+
+instance ToClickhouseType Bool where
+  toClickhouseType = ClickBool
+
+instance ToClickhouseType Int8 where
+  toClickhouseType = ClickInt8
+
+instance ToClickhouseType Int16 where
+  toClickhouseType = ClickInt16
+
+instance ToClickhouseType Int32 where
+  toClickhouseType = ClickInt32
+
+instance ToClickhouseType Int64 where
+  toClickhouseType = ClickInt64
+
+instance ToClickhouseType Word8 where
+  toClickhouseType = ClickUInt8
+
+instance ToClickhouseType Word16 where
+  toClickhouseType = ClickUInt16
+
+instance ToClickhouseType Word32 where
+  toClickhouseType = ClickUInt32
+
+instance ToClickhouseType Word64 where
+  toClickhouseType = ClickUInt64
+
+instance ToClickhouseType Float where
+  toClickhouseType = ClickFloat32
+
+instance ToClickhouseType Double where
+  toClickhouseType = ClickFloat64
 
 instance ToClickhouseType Day where
   toClickhouseType = ClickDate
@@ -35,20 +68,8 @@ instance ToClickhouseType Day where
 instance ToClickhouseType UTCTime where
   toClickhouseType = ClickDateTime
 
-instance ToClickhouseType Bool where
-  toClickhouseType = ClickBool
-
-instance ToClickhouseType Double where
-  toClickhouseType = ClickFloat64
-
-instance ToClickhouseType Float where
-  toClickhouseType = ClickFloat32
-
 instance ToClickhouseType UUID where
-  toClickhouseType = ClickUUID
+  toClickhouseType = ClickUuid
 
-instance ToClickhouseType Word8 where
-  toClickhouseType = ClickUInt8
-
-instance ToClickhouseType Word32 where
-  toClickhouseType = ClickUInt32
+instance (ToClickhouseType a) => ToClickhouseType (Maybe a) where
+  toClickhouseType = ClickNullable . fmap toClickhouseType

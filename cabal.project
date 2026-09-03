@@ -1,0 +1,7 @@
+packages: .
+
+-- hcurl is not released to Hackage yet, pin the revision we build against.
+source-repository-package
+  type: git
+  location: https://github.com/Reykudo/hcurl
+  tag: 14a333c8e0a12b64ab6863e2c149f07d301c6649

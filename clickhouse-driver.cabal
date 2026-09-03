@@ -1,208 +1,78 @@
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.35.0.
---
--- see: https://github.com/sol/hpack
-
-name:           clickhouse-driver
-version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/clickhouse-driver#readme>
-homepage:       https://github.com/GetShopTV/clickhouse-driver#readme
-bug-reports:    https://github.com/GetShopTV/clickhouse-driver/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2021 Author name here
-license:        BSD3
-build-type:     Simple
+cabal-version:      3.0
+name:               clickhouse-driver
+version:            0.2.0.0
+synopsis:           ClickHouse HTTP client (hcurl transport, RowBinary format)
+description:
+  Streaming ClickHouse client built on top of @hcurl@ (libcurl multi
+  interface).  Query results and inserts use the binary @RowBinary@ /
+  @RowBinaryWithNamesAndTypes@ wire format.
+license:            BSD-3-Clause
+author:             GetShopTV
+maintainer:         example@example.com
+build-type:         Simple
 extra-source-files:
     README.md
     ChangeLog.md
 
-source-repository head
-  type: git
-  location: https://github.com/GetShopTV/clickhouse-driver
+common warnings
+  ghc-options: -Wall -Wcompat -Wincomplete-uni-patterns
 
 library
+  import:           warnings
+  hs-source-dirs:   src
   exposed-modules:
       Database.ClickHouse
       Database.Clickhouse.Client.HTTP.Client
       Database.Clickhouse.Client.HTTP.Types
       Database.Clickhouse.Client.Types
-      Database.Clickhouse.Conversion.Bytestring.From
-      Database.Clickhouse.Conversion.CSV.Decode
-      Database.Clickhouse.Conversion.CSV.Orphans
-      Database.Clickhouse.Conversion.CSV.Renderer
-      Database.Clickhouse.Conversion.PreparedQuery
+      Database.Clickhouse.Conversion.Binary.Decode
+      Database.Clickhouse.Conversion.Binary.Encode
       Database.Clickhouse.Conversion.ToClickhouse
       Database.Clickhouse.Conversion.Types
-  other-modules:
-      Paths_clickhouse_driver
-  hs-source-dirs:
-      src
-  default-extensions:
-      UndecidableInstances
-      OverloadedStrings
-      TypeOperators
-      TypeApplications
-      TypeFamilies
-      DataKinds
-      FunctionalDependencies
-      LambdaCase
-      NamedFieldPuns
-      ViewPatterns
-      PatternSynonyms
-      GADTs
-      DeriveGeneric
-      DeriveAnyClass
-      DerivingStrategies
-      GeneralizedNewtypeDeriving
-      OverloadedLabels
-      DuplicateRecordFields
-      PolyKinds
-      ImportQualifiedPost
-  ghc-options: -Wall -Wincomplete-patterns
   build-depends:
-      aeson
-    , base >=4.7 && <5
-    , binary
+      base          >=4.18 && <5
     , bytestring
-    , case-insensitive
-    , cassava
-    , cassava-conduit
     , conduit
-    , conduit-extra
-    , data-default
-    , data-dword
-    , exceptions
-    , http-client
-    , http-client-tls
-    , http-conduit
-    , iproute
-    , mtl
+    , hcurl
+    , http-types
     , resourcet
-    , safe-decimal
-    , string-conversions
     , text
     , time
-    , tz
+    , transformers
+    , unliftio
     , uuid
     , vector
-  default-language: Haskell2010
+  default-language: GHC2021
 
 executable clickhouse-driver-example
-  main-is: Main.hs
-  other-modules:
-      CustomQQ
-      Paths_clickhouse_driver
-  hs-source-dirs:
-      example
-  default-extensions:
-      UndecidableInstances
-      OverloadedStrings
-      TypeOperators
-      TypeApplications
-      TypeFamilies
-      DataKinds
-      FunctionalDependencies
-      LambdaCase
-      NamedFieldPuns
-      ViewPatterns
-      PatternSynonyms
-      GADTs
-      DeriveGeneric
-      DeriveAnyClass
-      DerivingStrategies
-      GeneralizedNewtypeDeriving
-      OverloadedLabels
-      DuplicateRecordFields
-      PolyKinds
-      ImportQualifiedPost
-  ghc-options: -Wall -Wincomplete-patterns -threaded -rtsopts -with-rtsopts=-N
+  import:           warnings
+  main-is:          Main.hs
+  hs-source-dirs:   example
+  ghc-options:      -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      PyF
-    , aeson
-    , base >=4.7 && <5
-    , binary
+      base
     , bytestring
-    , case-insensitive
-    , cassava
-    , cassava-conduit
     , clickhouse-driver
-    , conduit
-    , conduit-extra
-    , data-default
-    , data-dword
-    , exceptions
-    , http-client
-    , http-client-tls
-    , http-conduit
-    , iproute
-    , mtl
-    , resourcet
-    , safe-decimal
-    , string-conversions
-    , template-haskell
     , text
     , time
-    , tz
     , uuid
     , vector
-  default-language: Haskell2010
+  default-language: GHC2021
 
 test-suite clickhouse-driver-test
-  type: exitcode-stdio-1.0
-  main-is: Spec.hs
-  other-modules:
-      Paths_clickhouse_driver
-  hs-source-dirs:
-      test
-  default-extensions:
-      UndecidableInstances
-      OverloadedStrings
-      TypeOperators
-      TypeApplications
-      TypeFamilies
-      DataKinds
-      FunctionalDependencies
-      LambdaCase
-      NamedFieldPuns
-      ViewPatterns
-      PatternSynonyms
-      GADTs
-      DeriveGeneric
-      DeriveAnyClass
-      DerivingStrategies
-      GeneralizedNewtypeDeriving
-      OverloadedLabels
-      DuplicateRecordFields
-      PolyKinds
-      ImportQualifiedPost
-  ghc-options: -Wall -Wincomplete-patterns -threaded -rtsopts -with-rtsopts=-N
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  ghc-options:      -threaded
   build-depends:
-      aeson
-    , base >=4.7 && <5
-    , binary
+      base
     , bytestring
-    , case-insensitive
-    , cassava
-    , cassava-conduit
     , clickhouse-driver
     , conduit
-    , conduit-extra
-    , data-default
-    , data-dword
-    , exceptions
-    , http-client
-    , http-client-tls
-    , http-conduit
-    , iproute
-    , mtl
     , resourcet
-    , safe-decimal
-    , string-conversions
     , text
     , time
-    , tz
     , uuid
     , vector
-  default-language: Haskell2010
+  default-language: GHC2021
