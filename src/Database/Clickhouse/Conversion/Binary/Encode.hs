@@ -38,7 +38,7 @@ import Data.ByteString.Builder
   , word8
   )
 import Data.ByteString.Lazy qualified as BSL
-import Data.Time (Day, UTCTime)
+import Data.Time (Day)
 import Data.Time.Calendar (diffDays)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Time.Clock.System (systemEpochDay)

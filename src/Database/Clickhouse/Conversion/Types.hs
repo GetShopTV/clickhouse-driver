@@ -30,7 +30,6 @@ import Data.ByteString.Char8 qualified as C8
 import Data.Char (isAlphaNum, isDigit, isSpace)
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Text.Encoding qualified as Text
 
 -- | Decoded shape of a ClickHouse column type.
 data ChType

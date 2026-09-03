@@ -48,6 +48,7 @@ for the recorded run.
 
 ## Development
 
-The pinned `hcurl` revision is declared in `cabal.project`. Building requires
-libcurl/libuv development files and `c2hs` (see the rollout record for the
-exact nix environment used).
+`nix develop` (or `direnv allow`) provides GHC 9.10, cabal-install, `c2hs`,
+pkg-config and the libcurl/libuv development files. The pinned `hcurl`
+revision is declared in `cabal.project` (and mirrored as a flake input);
+cabal fetches and builds it from source.
