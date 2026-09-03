@@ -48,16 +48,19 @@ settingsFromEnv = do
   user <- maybe "default" id <$> lookupEnv "CH_USER"
   password <- maybe "" id <$> lookupEnv "CH_PASSWORD"
   let port = maybe 8123 read rawPort
+  transport <-
+    newHTTPTransport
+      ( defaultHTTPSettings
+          { clickhouseUrl = ByteString.pack url
+          , port
+          }
+      )
   pure $
     (defaultConnection transport)
       { username = Text.pack user
       , password = Text.pack password
       , database = Text.pack databaseText
-      , connectionSettings =
-          transport {clickhouseUrl = ByteString.pack url, port}
       }
-  where
-    transport = defaultHTTPSettings
 
 main :: IO ()
 main = do

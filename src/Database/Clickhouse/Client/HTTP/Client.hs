@@ -7,10 +7,18 @@
 {- |
 ClickHouse transport implemented on top of hcurl (libcurl multi interface).
 
-Unless a custom agent is provided in 'ClickhouseHTTPSettings', the client
-uses a single process-wide curl agent created lazily on first use.  Requests
-are plain HTTP POSTs; responses are consumed as a streaming 'BodyReader' and
-yielded chunk by chunk by the conduit.
+The transport never creates an agent implicitly.  The caller owns the hcurl
+agent and passes it in via 'ClickhouseHTTPTransport':
+
+  * 'newManagedAgent' spawns the driver's default agent topology (hcurl's
+    managed agent with its default policy) and performs the one-off libcurl
+    global initialisation;
+  * an externally created agent (hcurl's 'spawnAgent', 'spawnThreadedAgent',
+    'spawnManagedAgent') can be used instead — in that case the caller is
+    responsible for calling 'HCurl.Simple.initCurl' once first.
+
+Requests are plain HTTP POSTs; responses are consumed as a streaming
+'BodyReader' and yielded chunk by chunk by the conduit.
 
 Error reporting:
 
@@ -22,8 +30,12 @@ Error reporting:
 -}
 module Database.Clickhouse.Client.HTTP.Client
   ( ClientHTTP
+  , ClickhouseHTTPTransport (..)
+  , newManagedAgent
+  , newHTTPTransport
   ) where
 
+import Control.Concurrent.MVar (MVar, newMVar, tryTakeMVar)
 import Control.Exception (throwIO)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class (lift)
@@ -35,6 +47,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
 import Database.Clickhouse.Client.HTTP.Types (ClickhouseHTTPSettings (..))
 import Database.Clickhouse.Client.Types
+import HCurl.Agent (Agent)
 import HCurl.Agent qualified as CurlAgent
 import HCurl.Request qualified as Curl
 import HCurl.Response (HttpParts (..), StreamingResponse (..))
@@ -48,17 +61,44 @@ import UnliftIO (MonadUnliftIO)
 -- | The HTTP transport implementation marker.
 data ClientHTTP
 
+-- | Transport settings of 'ClientHTTP': pure connection knobs plus the
+-- user-owned hcurl agent every request is sent through.
+data ClickhouseHTTPTransport = ClickhouseHTTPTransport
+  { transportOptions :: !ClickhouseHTTPSettings
+  , transportAgent :: !Agent
+  }
+
 instance ClickhouseClient ClientHTTP where
-  type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPSettings
+  type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPTransport
   sendSource = sendSourceHTTP
 
--- | A lazily initialised, process-wide curl agent.
-{-# NOINLINE processAgent #-}
-processAgent :: CurlAgent.Agent
-processAgent =
-  unsafePerformIO $ do
-    CurlSimple.initCurl
-    CurlAgent.spawnAgent CurlTypes.defaultConfig
+-- | One-shot libcurl global initialisation, shared by every agent created
+-- through 'newManagedAgent'.
+{-# NOINLINE curlInitGate #-}
+curlInitGate :: MVar ()
+curlInitGate = unsafePerformIO (newMVar ())
+
+initCurlOnce :: IO ()
+initCurlOnce = do
+  taken <- tryTakeMVar curlInitGate
+  case taken of
+    Just () -> CurlSimple.initCurl
+    Nothing -> pure ()
+
+-- | Create the driver's default agent: hcurl's managed agent with its
+-- default policy (see 'HCurl.Agent.defaultManagedPolicy').
+newManagedAgent :: IO Agent
+newManagedAgent = do
+  initCurlOnce
+  policy <- CurlAgent.defaultManagedPolicy
+  CurlAgent.spawnManagedAgent policy CurlTypes.defaultConfig
+
+-- | Wrap connection knobs into transport settings using a freshly created
+-- default managed agent.
+newHTTPTransport :: ClickhouseHTTPSettings -> IO ClickhouseHTTPTransport
+newHTTPTransport options = do
+  agent <- newManagedAgent
+  pure $ ClickhouseHTTPTransport {transportOptions = options, transportAgent = agent}
 
 sendSourceHTTP ::
   (MonadResource m, MonadUnliftIO m) =>
@@ -66,7 +106,8 @@ sendSourceHTTP ::
   CHRequest ->
   ConduitT i ByteString m ()
 sendSourceHTTP settings request = do
-  let agent = maybe processAgent id (httpAgent (connectionSettings settings))
+  let ClickhouseHTTPTransport {transportOptions = _, transportAgent = agent} =
+        connectionSettings settings
   outcome <-
     lift $ CurlStream.httpStreaming agent (buildHCurlRequest settings request)
   case outcome of
@@ -126,8 +167,8 @@ buildHCurlRequest ::
 buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
   Curl.Request
     { Curl.host = endpoint
-    , Curl.timeoutMS = responseTimeoutMS httpSettings
-    , Curl.connectionTimeoutMS = connectionTimeoutMS httpSettings
+    , Curl.timeoutMS = responseTimeoutMS httpOptions
+    , Curl.connectionTimeoutMS = connectionTimeoutMS httpOptions
     , Curl.lowSpeedLimit =
         Curl.LowSpeedLimit
           { Curl.lowSpeed = fst lowSpeed
@@ -139,12 +180,12 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
     , Curl.extraOptions = []
     }
   where
-    httpSettings = connectionSettings
+    httpOptions = transportOptions connectionSettings
     endpoint =
-      clickhouseUrl httpSettings
-        <> if port httpSettings == 0
+      clickhouseUrl httpOptions
+        <> if port httpOptions == 0
           then mempty
-          else ":" <> (encodeUtf8Show (port httpSettings))
+          else ":" <> encodeUtf8Show (port httpOptions)
         <> renderQuery
           True
           ( case requestData of
@@ -162,7 +203,7 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
       , "X-ClickHouse-Database: " <> TE.encodeUtf8 database
       ]
         <> maybe [] (\format -> ["X-ClickHouse-Format: " <> format]) requestResponseFormat
-    lowSpeed = lowSpeedLimit httpSettings
+    lowSpeed = lowSpeedLimit httpOptions
 
 encodeUtf8Show :: Show a => a -> ByteString
 encodeUtf8Show = TE.encodeUtf8 . Text.pack . show

@@ -22,7 +22,8 @@ import Database.ClickHouse
 
 main :: IO ()
 main = do
-  let conn = defaultConnection defaultHTTPSettings
+  transport <- newHTTPTransport defaultHTTPSettings
+  let conn = defaultConnection transport
   runCommand conn "CREATE TABLE IF NOT EXISTS t (n UInt64, s String) ENGINE = Memory"
   runInsert conn "t" ["n", "s"]
     [ [ClickUInt64 1, ClickString "one"]
@@ -43,24 +44,27 @@ conduit for simple use.
 
 ## hcurl agent
 
-By default the driver lazily creates one process-wide hcurl agent
-(`defaultConfig`). To take ownership of the agent — choose between
-`spawnAgent` (single), `spawnThreadedAgent` or `spawnManagedAgent`, or set
-connection pool limits — create it yourself and pass it in
-`ClickhouseHTTPSettings.httpAgent`:
+The transport never creates an agent implicitly.  The caller owns it and
+passes it through `ClickhouseHTTPTransport`:
 
 ```haskell
-import HCurl.Agent (spawnManagedAgent, ManagedPolicy)
-import HCurl.Simple (initCurl)
-
-main :: IO ()
-main = do
-  initCurl -- required when providing a custom agent
-  agent <- spawnManagedAgent policy HCurl.Types.defaultConfig
-  let settings = defaultHTTPSettings { httpAgent = Just agent }
+transport <-
+  newHTTPTransport -- spawns the default managed agent (hcurl default policy)
+    defaultHTTPSettings
 ```
 
-The custom agent is then used for every request made with those settings.
+or, to pick the agent topology yourself:
+
+```haskell
+import HCurl.Agent (spawnAgent, spawnThreadedAgent, spawnManagedAgent)
+import HCurl.Simple (initCurl)
+
+agent <- spawnThreadedAgent 4 HCurl.Types.defaultConfig
+let transport = ClickhouseHTTPTransport defaultHTTPSettings agent
+```
+
+`initCurl` is required once before any custom agent is used; agents created
+by `newManagedAgent` do that automatically.
 
 ## Integration harness
 

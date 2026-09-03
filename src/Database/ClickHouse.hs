@@ -17,7 +17,8 @@ Minimal example:
 >
 > main :: IO ()
 > main = do
->   let conn = defaultConnection defaultHTTPSettings
+>   transport <- newHTTPTransport defaultHTTPSettings
+>   let conn = defaultConnection transport
 >   runCommand conn "CREATE TABLE IF NOT EXISTS t (n UInt64, s String) ENGINE = Memory"
 >   runInsert conn "t" ["n", "s"] [[ClickUInt64 1, ClickString "one"], [ClickUInt64 2, ClickString "two"]]
 >   rows <- runQuery conn "SELECT n, s FROM t ORDER BY n"
@@ -29,6 +30,9 @@ module Database.ClickHouse
   , module Database.Clickhouse.Client.HTTP.Types
   , module Database.Clickhouse.Conversion.ToClickhouse
   , ClientHTTP
+  , ClickhouseHTTPTransport (..)
+  , newManagedAgent
+  , newHTTPTransport
     -- * Queries
   , sourceQuery
   , runQuery
@@ -43,7 +47,12 @@ import Data.Text (Text)
 import Data.Text.Encoding qualified as Text
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
-import Database.Clickhouse.Client.HTTP.Client (ClientHTTP)
+import Database.Clickhouse.Client.HTTP.Client
+  ( ClientHTTP
+  , ClickhouseHTTPTransport (..)
+  , newHTTPTransport
+  , newManagedAgent
+  )
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
 import Database.Clickhouse.Conversion.Binary.Decode (decodeRowBinaryC)
