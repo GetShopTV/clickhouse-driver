@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE LambdaCase #-}
 
 {- |
 Streaming ClickHouse driver.
@@ -17,8 +16,7 @@ Minimal example:
 >
 > main :: IO ()
 > main = do
->   transport <- newHTTPTransport defaultHTTPSettings
->   let conn = defaultConnection transport
+>   conn <- connectHTTP defaultHTTPSettings
 >   runCommand conn "CREATE TABLE IF NOT EXISTS t (n UInt64, s String) ENGINE = Memory"
 >   runInsert conn "t" ["n", "s"] [[ClickUInt64 1, ClickString "one"], [ClickUInt64 2, ClickString "two"]]
 >   rows <- runQuery conn "SELECT n, s FROM t ORDER BY n"
@@ -33,6 +31,7 @@ module Database.ClickHouse
   , ClickhouseHTTPTransport (..)
   , newManagedAgent
   , newHTTPTransport
+  , connectHTTP
     -- * Queries
   , sourceQuery
   , sourceQueryWithExternals
@@ -53,8 +52,8 @@ import Data.Vector qualified as Vector
 import Database.Clickhouse.Client.HTTP.Client
   ( ClientHTTP
   , ClickhouseHTTPTransport (..)
-  , newHTTPTransport
   , newManagedAgent
+  , newHTTPTransport
   )
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
@@ -63,6 +62,19 @@ import Database.Clickhouse.Conversion.Binary.Encode (encodeRows)
 import Database.Clickhouse.Conversion.ToClickhouse
 import Database.Clickhouse.Conversion.Types (renderInsertStatement)
 import UnliftIO (MonadUnliftIO)
+
+-- | Open a connection: spawn the default managed hcurl agent and wrap the
+-- given transport knobs into connection settings with the @default@
+-- user/password/database. Override the credentials with record update:
+--
+-- > conn <- connectHTTP defaultHTTPSettings
+-- > let conn' = conn { username = "report", password = "…", database = "analytics" }
+connectHTTP ::
+  ClickhouseHTTPSettings ->
+  IO (ClickhouseConnectionSettings ClientHTTP)
+connectHTTP options = do
+  transport <- newHTTPTransport options
+  pure (defaultConnection transport)
 
 -- | Stream the rows of a SELECT (or any query) as they arrive.
 --

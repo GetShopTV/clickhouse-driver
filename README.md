@@ -22,8 +22,7 @@ import Database.ClickHouse
 
 main :: IO ()
 main = do
-  transport <- newHTTPTransport defaultHTTPSettings
-  let conn = defaultConnection transport
+  conn <- connectHTTP defaultHTTPSettings
   runCommand conn "CREATE TABLE IF NOT EXISTS t (n UInt64, s String) ENGINE = Memory"
   runInsert conn "t" ["n", "s"]
     [ [ClickUInt64 1, ClickString "one"]
@@ -36,7 +35,12 @@ main = do
 Connection parameters come from `ClickhouseConnectionSettings`; HTTP details
 (host, port, timeouts) from `ClickhouseHTTPSettings`. The library API is
 polymorphic over a `ClickhouseClient` transport so alternative transports can
-be added later.
+be added later.  `connectHTTP` spawns the default managed agent and returns
+ready-to-use settings; override the default credentials with record update:
+
+```haskell
+let conn' = conn { username = "report", password = "secret", database = "analytics" }
+```
 
 Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
 row at a time. Plain helpers `runQuery`, `runInsert`, `runCommand` wrap the
