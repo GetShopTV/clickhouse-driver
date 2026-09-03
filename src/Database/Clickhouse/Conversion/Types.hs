@@ -37,10 +37,14 @@ data ChType
   | ChInt16
   | ChInt32
   | ChInt64
+  | ChInt128
+  | ChInt256
   | ChUInt8
   | ChUInt16
   | ChUInt32
   | ChUInt64
+  | ChUInt128
+  | ChUInt256
   | ChFloat32
   | ChFloat64
   | ChBool
@@ -52,6 +56,8 @@ data ChType
   | ChDateTime64 !Int -- ^ fractional-digit precision
   | ChDecimal !Int !Int -- ^ precision, scale
   | ChUuid
+  | ChIPv4
+  | ChIPv6
   | ChEnum !Int -- ^ underlying integer width in bits (8 or 16)
   | ChNullable !ChType
   | ChLowCardinality !ChType
@@ -65,7 +71,8 @@ decimalWidthBytes :: Int -> Int
 decimalWidthBytes precision
   | precision <= 9 = 4
   | precision <= 18 = 8
-  | otherwise = 16
+  | precision <= 38 = 16
+  | otherwise = 32
 
 -- | Response format requested through the @X-ClickHouse-Format@ header.
 defaultResponseFormat :: ByteString
@@ -83,7 +90,7 @@ parseNested :: ByteString -> Either String (ChType, ByteString)
 parseNested input = do
   (ident, rest0) <- readIdent (C8.dropWhile isSpace input)
   case C8.uncons (C8.dropWhile isSpace rest0) of
-    Nothing -> pure (plainType ident, mempty)
+    Nothing -> (,) <$> plainType ident <*> pure mempty
     Just ('(', rest) -> do
       (args, rest') <- readArgs (C8.dropWhile isSpace rest)
       applied <- applyArgs ident args
@@ -125,7 +132,9 @@ readArgs = go []
                   then do
                     (t, rest1) <- parseNested bs
                     go (AType t : acc) rest1
-                  else go (AType (plainType ident) : acc) rest0
+                  else do
+                    plain <- plainType ident
+                    go (AType plain : acc) rest0
               else do
                 n <- readNumber digits
                 go (ANum n : acc) restDigits
@@ -133,6 +142,10 @@ readArgs = go []
 
 applyArgs :: ByteString -> [Arg] -> Either String ChType
 applyArgs name args = case name of
+  -- IPv4/IPv6 have no arguments but ClickHouse may still render them with an
+  -- empty argument list, e.g. from the type-name function.
+  "IPv4" -> pure ChIPv4
+  "IPv6" -> pure ChIPv6
   "Nullable" -> ChNullable <$> singleType
   "LowCardinality" -> ChLowCardinality <$> singleType
   "Array" -> ChArray <$> singleType
@@ -165,25 +178,31 @@ applyArgs name args = case name of
       ANum n -> Right n
       _ -> Left "expected a numeric argument"
 
-plainType :: ByteString -> ChType
+plainType :: ByteString -> Either String ChType
 plainType name = case name of
-  "Int8" -> ChInt8
-  "Int16" -> ChInt16
-  "Int32" -> ChInt32
-  "Int64" -> ChInt64
-  "UInt8" -> ChUInt8
-  "UInt16" -> ChUInt16
-  "UInt32" -> ChUInt32
-  "UInt64" -> ChUInt64
-  "Float32" -> ChFloat32
-  "Float64" -> ChFloat64
-  "Bool" -> ChBool
-  "String" -> ChString
-  "Date" -> ChDate
-  "Date32" -> ChDate32
-  "DateTime" -> ChDateTime
-  "UUID" -> ChUuid
-  _ -> ChString -- unknown scalar types degrade to raw String bytes
+  "Int8" -> Right ChInt8
+  "Int16" -> Right ChInt16
+  "Int32" -> Right ChInt32
+  "Int64" -> Right ChInt64
+  "Int128" -> Right ChInt128
+  "Int256" -> Right ChInt256
+  "UInt8" -> Right ChUInt8
+  "UInt16" -> Right ChUInt16
+  "UInt32" -> Right ChUInt32
+  "UInt64" -> Right ChUInt64
+  "UInt128" -> Right ChUInt128
+  "UInt256" -> Right ChUInt256
+  "Float32" -> Right ChFloat32
+  "Float64" -> Right ChFloat64
+  "Bool" -> Right ChBool
+  "String" -> Right ChString
+  "Date" -> Right ChDate
+  "Date32" -> Right ChDate32
+  "DateTime" -> Right ChDateTime
+  "UUID" -> Right ChUuid
+  "IPv4" -> Right ChIPv4
+  "IPv6" -> Right ChIPv6
+  unsupported -> Left ("unsupported ClickHouse type: " <> show unsupported)
 
 readIdent :: ByteString -> Either String (ByteString, ByteString)
 readIdent bs =

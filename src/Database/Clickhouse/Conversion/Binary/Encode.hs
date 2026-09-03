@@ -59,10 +59,14 @@ encodeValue = \case
   ClickInt16 n -> int16LE n
   ClickInt32 n -> int32LE n
   ClickInt64 n -> int64LE n
+  ClickInt128 n -> encodeLEInteger 16 (toInteger n)
+  ClickInt256 n -> encodeLEInteger 32 (toInteger n)
   ClickUInt8 n -> word8 n
   ClickUInt16 n -> word16LE n
   ClickUInt32 n -> word32LE n
   ClickUInt64 n -> word64LE n
+  ClickUInt128 n -> encodeLEInteger 16 (toInteger n)
+  ClickUInt256 n -> encodeLEInteger 32 (toInteger n)
   ClickFloat32 f -> floatLE f
   ClickFloat64 d -> doubleLE d
   ClickDate day -> int16LE (fromIntegral (epochDays day))
@@ -75,7 +79,12 @@ encodeValue = \case
      in word64LE hi <> word64LE lo
   ClickDecimal32 n -> int32LE (fromIntegral n)
   ClickDecimal64 n -> int64LE (fromIntegral n)
-  ClickDecimal128 n -> encodeSigned128 n
+  ClickDecimal128 n -> encodeLEInteger 16 n
+  ClickDecimal256 n -> encodeLEInteger 32 n
+  ClickIPv4 address -> word32LE address
+  ClickIPv6 bytes
+    | BS.length bytes /= 16 -> error "ClickIPv6: expected 16 bytes"
+    | otherwise -> byteString bytes
   ClickNullable Nothing -> word8 1
   ClickNullable (Just value) -> word8 0 <> encodeValue value
   ClickArray values ->
@@ -96,13 +105,18 @@ encodeRows :: [Vector ClickhouseType] -> ByteString
 encodeRows rows =
   BSL.toStrict (toLazyByteString (foldMap encodeRow rows))
 
-encodeSigned128 :: Integer -> Builder
-encodeSigned128 n =
-  let modulo = 2 ^ (128 :: Int)
-      wrapped = n `mod` modulo
-      lo = fromIntegral (wrapped .&. 0xFFFFFFFFFFFFFFFF) :: Word64
-      hi = fromIntegral (wrapped `shiftR` 64) :: Word64
-   in word64LE lo <> word64LE hi
+-- | Encode an integer as two's complement, little-endian, over the given
+-- number of bytes. Negative values are wrapped to their fixed-width
+-- representation.
+encodeLEInteger :: Int -> Integer -> Builder
+encodeLEInteger widthBytes value =
+  mconcat
+    [ word64LE (fromIntegral (wrapped `shiftR` (64 * chunk)) :: Word64)
+    | chunk <- [0 .. widthBytes `div` 8 - 1]
+    ]
+  where
+    bits = widthBytes * 8
+    wrapped = value `mod` 2 ^ bits
 
 epochDays :: Day -> Integer
 epochDays day = diffDays day systemEpochDay

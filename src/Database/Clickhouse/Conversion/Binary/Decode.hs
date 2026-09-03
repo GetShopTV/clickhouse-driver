@@ -130,6 +130,22 @@ pWord64le =
 pInt64le :: P Int64
 pInt64le = fromIntegral <$> pWord64le
 
+-- | Read @widthBytes \/ 8@ little-endian words and combine them into an
+-- unsigned 'Integer'.
+pFixedUnsigned :: Int -> P Integer
+pFixedUnsigned widthBytes =
+  sum . zipWith (\i w -> toInteger w `shiftL` (64 * i)) [0 :: Int ..]
+    <$> replicateM (widthBytes `div` 8) pWord64le
+
+-- | Like 'pFixedUnsigned' but interpreting the value as two's complement
+-- signed over the given width (a multiple of 8 bytes).
+pFixedSigned :: Int -> P Integer
+pFixedSigned widthBytes = do
+  raw <- pFixedUnsigned widthBytes
+  let bits = widthBytes * 8
+      modulus = 2 ^ bits
+  pure (if raw >= modulus `div` 2 then raw - modulus else raw)
+
 pFloat32le :: P Float
 pFloat32le = castWord32ToFloat <$> pWord32le
 
@@ -177,10 +193,14 @@ decodeValue = \case
   ChInt16 -> ClickInt16 <$> pInt16le
   ChInt32 -> ClickInt32 <$> pInt32le
   ChInt64 -> ClickInt64 <$> pInt64le
+  ChInt128 -> ClickInt128 . fromInteger <$> pFixedSigned 16
+  ChInt256 -> ClickInt256 . fromInteger <$> pFixedSigned 32
   ChUInt8 -> ClickUInt8 <$> pWord8
   ChUInt16 -> ClickUInt16 <$> pWord16le
   ChUInt32 -> ClickUInt32 <$> pWord32le
   ChUInt64 -> ClickUInt64 <$> pWord64le
+  ChUInt128 -> ClickUInt128 . fromInteger <$> pFixedUnsigned 16
+  ChUInt256 -> ClickUInt256 . fromInteger <$> pFixedUnsigned 32
   ChFloat32 -> ClickFloat32 <$> pFloat32le
   ChFloat64 -> ClickFloat64 <$> pFloat64le
   ChBool -> ClickBool . (/= 0) <$> pWord8
@@ -197,15 +217,18 @@ decodeValue = \case
     mantissa <- case width of
       4 -> fromIntegral <$> pInt32le
       8 -> fromIntegral <$> pInt64le
-      _ -> signed128 <$> ((,) <$> pWord64le <*> pWord64le)
+      _ -> pFixedSigned width
     pure $ case width of
       4 -> ClickDecimal32 mantissa
       8 -> ClickDecimal64 mantissa
-      _ -> ClickDecimal128 mantissa
+      16 -> ClickDecimal128 mantissa
+      _ -> ClickDecimal256 mantissa
   ChUuid -> do
     hi <- pWord64le
     lo <- pWord64le
     pure (ClickUuid (fromWords64 hi lo))
+  ChIPv4 -> ClickIPv4 <$> pWord32le
+  ChIPv6 -> ClickIPv6 <$> pBytes 16
   ChEnum 8 -> ClickInt8 <$> pInt8
   ChEnum 16 -> ClickInt16 <$> pInt16le
   ChEnum _ -> ClickInt64 <$> pInt64le
@@ -240,13 +263,6 @@ scaledSecondsToUTC precision scaled =
   posixSecondsToUTCTime
     (fromRational (fromIntegral scaled / (10 ^ precision :: Rational)))
 
-signed128 :: (Word64, Word64) -> Integer
-signed128 (lo, hi) =
-  let raw = toInteger lo + (toInteger hi `shiftL` 64)
-      modulus = 2 ^ (128 :: Int)
-   in if raw >= modulus `div` 2
-        then raw - modulus
-        else raw
 
 headerParser :: P ([ByteString], [ByteString])
 headerParser = do

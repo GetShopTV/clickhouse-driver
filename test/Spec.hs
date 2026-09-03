@@ -80,6 +80,9 @@ checks =
         "UUID 550e8400-e29b-41d4-a716-446655440000"
         (ClickUuid (fromWords64 0x550E8400E29B41D4 0xA716446655440000))
         (BS.pack [212, 65, 155, 226, 0, 132, 14, 85, 0, 0, 68, 85, 102, 68, 22, 167])
+      goldenEncode "IPv4 1.2.3.4" (ClickIPv4 0x01020304) "\EOT\ETX\STX\SOH"
+      goldenEncode "Int128 -1" (ClickInt128 (-1)) (BS.replicate 16 255)
+      goldenEncode "UInt256 1" (ClickUInt256 1) (BS.pack (1 : replicate 31 0))
   , check "header buffer round trip decodes to the original rows" $ do
       let buffer = makeBuffer columnNames typeNames rows
       decoded <- decodeRowBinaryBuffer buffer
@@ -103,7 +106,11 @@ checks =
 typeNameCases :: [(ByteString, ChType)]
 typeNameCases =
   [ ("Int8", ChInt8)
+  , ("Int128", ChInt128)
+  , ("Int256", ChInt256)
   , ("UInt64", ChUInt64)
+  , ("UInt128", ChUInt128)
+  , ("UInt256", ChUInt256)
   , ("Float32", ChFloat32)
   , ("Bool", ChBool)
   , ("String", ChString)
@@ -114,6 +121,8 @@ typeNameCases =
   , ("DateTime64(3, 'UTC')", ChDateTime64 3)
   , ("Decimal(18, 3)", ChDecimal 18 3)
   , ("UUID", ChUuid)
+  , ("IPv4", ChIPv4)
+  , ("IPv6", ChIPv6)
   , ("Enum8('a' = 1, 'b' = 2)", ChEnum 8)
   , ("Nullable(String)", ChNullable ChString)
   , ("LowCardinality(String)", ChLowCardinality ChString)
@@ -139,6 +148,11 @@ columnNames =
   , "map"
   , "tup"
   , "fx"
+  , "i128"
+  , "u256"
+  , "ip4"
+  , "ip6"
+  , "dec256"
   ]
 
 typeNames :: [ByteString]
@@ -158,6 +172,11 @@ typeNames =
   , "Map(String, UInt8)"
   , "Tuple(Int8, String)"
   , "FixedString(5)"
+  , "Int128"
+  , "UInt256"
+  , "IPv4"
+  , "IPv6"
+  , "Decimal(40, 2)"
   ]
 
 rows :: [[ClickhouseType]]
@@ -177,6 +196,11 @@ rows =
     , ClickMap (Vector.fromList [(ClickString "k", ClickUInt8 7)])
     , ClickTuple (Vector.fromList [ClickInt8 (-1), ClickString "t"])
     , ClickFixedString "hello"
+    , ClickInt128 (-1)
+    , ClickUInt256 1
+    , ClickIPv4 0x01020304
+    , ClickIPv6 (BS.pack [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+    , ClickDecimal256 12345
     ]
   , [ ClickUInt64 2
     , ClickInt32 0
@@ -193,6 +217,11 @@ rows =
     , ClickMap Vector.empty
     , ClickTuple (Vector.fromList [ClickInt8 5, ClickString ""])
     , ClickFixedString "ab\NUL\NULc"
+    , ClickInt128 0
+    , ClickUInt256 0
+    , ClickIPv4 0
+    , ClickIPv6 (BS.replicate 16 0)
+    , ClickDecimal256 0
     ]
   ]
 

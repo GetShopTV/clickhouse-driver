@@ -4,15 +4,9 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    flake-parts.url = "github:hercules-ci/flake-parts";
 
-    haskell-flake = {
-      url = "github:srid/haskell-flake";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    haskell-flake.url = "github:srid/haskell-flake";
 
     # Same revision as the `source-repository-package` pin in cabal.project.
     hcurl = {

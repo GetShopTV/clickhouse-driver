@@ -38,6 +38,7 @@ import Data.Time (Day, UTCTime)
 import Data.UUID (UUID)
 import Data.Vector (Vector)
 import Data.Word (Word16, Word32, Word64, Word8)
+import Data.WideWord (Int128, Int256, Word128, Word256)
 import Database.Clickhouse.Conversion.Types (defaultResponseFormat)
 import Data.Acquire (Acquire)
 import UnliftIO (MonadUnliftIO)
@@ -150,10 +151,14 @@ data ClickhouseType
   | ClickInt16 !Int16
   | ClickInt32 !Int32
   | ClickInt64 !Int64
+  | ClickInt128 !Int128
+  | ClickInt256 !Int256
   | ClickUInt8 !Word8
   | ClickUInt16 !Word16
   | ClickUInt32 !Word32
   | ClickUInt64 !Word64
+  | ClickUInt128 !Word128
+  | ClickUInt256 !Word256
   | ClickFloat32 !Float
   | ClickFloat64 !Double
   | ClickDate !Day
@@ -163,11 +168,16 @@ data ClickhouseType
     -- column, so values round-trip to the exact scaled integer.
     ClickDateTime64 !Int !UTCTime
   | ClickUuid !UUID
+  | -- | IPv4 as a host-order 32-bit integer (RowBinary wire: UInt32 LE).
+    ClickIPv4 !Word32
+  | -- | IPv6 as the 16 network-order bytes (RowBinary writes them verbatim).
+    ClickIPv6 !ByteString
   | -- | Decimal columns keep the unscaled integer that sits on the wire.
-    -- Width is implied by the constructor (@32@/@64@/@128@ bits).
+    -- Width is implied by the constructor (@32@/@64@/@128@/@256@ bits).
     ClickDecimal32 !Integer
   | ClickDecimal64 !Integer
   | ClickDecimal128 !Integer
+  | ClickDecimal256 !Integer
   | ClickNullable !(Maybe ClickhouseType)
   | ClickArray !(Vector ClickhouseType)
   | ClickTuple !(Vector ClickhouseType)

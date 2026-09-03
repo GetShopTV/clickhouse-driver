@@ -12,7 +12,6 @@ maintainer:         example@example.com
 build-type:         Simple
 extra-source-files:
     README.md
-    ChangeLog.md
 
 common warnings
   ghc-options: -Wall -Wcompat -Wincomplete-uni-patterns
@@ -42,6 +41,7 @@ library
     , unliftio
     , uuid
     , vector
+    , wide-word
   default-language: GHC2021
 
 executable clickhouse-driver-example

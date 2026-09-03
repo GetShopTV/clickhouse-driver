@@ -19,6 +19,9 @@ module Main (main) where
 
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forM_, unless)
+import Data.Bits (shiftR, (.&.))
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as ByteString
 import Data.List (intercalate)
 import Data.Ratio ((%))
@@ -28,6 +31,7 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID (fromWords64)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
+import Data.Word (Word32)
 import Database.ClickHouse
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
@@ -118,7 +122,7 @@ wideTypes settings = do
   runCommand settings "DROP TABLE IF EXISTS driver_it_types"
   runCommand
     settings
-    "CREATE TABLE driver_it_types (id UInt64, d Date, d32 Date32, dt DateTime, dt64 DateTime64(3), u UUID, dec Decimal(18, 4), nu Nullable(String), arr Array(UInt16), mp Map(String, UInt8), tp Tuple(Int8, String), fx FixedString(5), b Bool, f Float64) ENGINE = Memory"
+    "CREATE TABLE driver_it_types (id UInt64, d Date, d32 Date32, dt DateTime, dt64 DateTime64(3), u UUID, dec Decimal(18, 4), nu Nullable(String), arr Array(UInt16), mp Map(String, UInt8), tp Tuple(Int8, String), fx FixedString(5), b Bool, f Float64, i128 Int128, u256 UInt256, ip4 IPv4, ip6 IPv6, dec256 Decimal(40, 2)) ENGINE = Memory"
   putStrLn "created table driver_it_types"
 
   let typeRows =
@@ -136,6 +140,11 @@ wideTypes settings = do
           , ClickFixedString "hello"
           , ClickBool True
           , ClickFloat64 1.5
+          , ClickInt128 (-1)
+          , ClickUInt256 1
+          , ClickIPv4 0x01020304
+          , ClickIPv6 (BS.pack [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+          , ClickDecimal256 12345
           ]
         , [ ClickUInt64 2
           , ClickDate (fromGregorian 1970 1 1)
@@ -151,19 +160,24 @@ wideTypes settings = do
           , ClickFixedString "ab\NUL\NULc"
           , ClickBool False
           , ClickFloat64 (-2.5)
+          , ClickInt128 0
+          , ClickUInt256 0
+          , ClickIPv4 0
+          , ClickIPv6 (BS.replicate 16 0)
+          , ClickDecimal256 0
           ]
         ]
   runInsert
     settings
     "driver_it_types"
-    ["id", "d", "d32", "dt", "dt64", "u", "dec", "nu", "arr", "mp", "tp", "fx", "b", "f"]
+    ["id", "d", "d32", "dt", "dt64", "u", "dec", "nu", "arr", "mp", "tp", "fx", "b", "f", "i128", "u256", "ip4", "ip6", "dec256"]
     typeRows
   putStrLn "inserted 2 wide-typed rows"
 
   wideRows <-
     runQuery
       settings
-      "SELECT id, d, d32, dt, dt64, u, dec, nu, arr, mp, tp, fx, b, f FROM driver_it_types ORDER BY id"
+      "SELECT id, d, d32, dt, dt64, u, dec, nu, arr, mp, tp, fx, b, f, i128, u256, ip4, ip6, dec256 FROM driver_it_types ORDER BY id"
   forM_ wideRows (putStrLn . renderRow)
   verifyEqual "wide type round trip" (map Vector.fromList typeRows) (Vector.toList wideRows)
 
@@ -188,10 +202,14 @@ showCell = \case
   ClickInt16 n -> show n
   ClickInt32 n -> show n
   ClickInt64 n -> show n
+  ClickInt128 n -> show n
+  ClickInt256 n -> show n
   ClickUInt8 n -> show n
   ClickUInt16 n -> show n
   ClickUInt32 n -> show n
   ClickUInt64 n -> show n
+  ClickUInt128 n -> show n
+  ClickUInt256 n -> show n
   ClickFloat32 f -> show f
   ClickFloat64 d -> show d
   ClickDate day -> show day
@@ -199,9 +217,12 @@ showCell = \case
   ClickDateTime time -> show time
   ClickDateTime64 _ time -> show time
   ClickUuid uuid -> show uuid
+  ClickIPv4 address -> showIPv4 address
+  ClickIPv6 bytes -> "ip6:" <> hexBytes bytes
   ClickDecimal32 n -> show n
   ClickDecimal64 n -> show n
   ClickDecimal128 n -> show n
+  ClickDecimal256 n -> show n
   ClickNullable Nothing -> "NULL"
   ClickNullable (Just value) -> showCell value
   ClickArray values -> "[" <> intercalate ", " (map showCell (Vector.toList values)) <> "]"
@@ -210,3 +231,13 @@ showCell = \case
     "{"
       <> intercalate ", " (map (\(k, v) -> showCell k <> ": " <> showCell v) (Vector.toList entries))
       <> "}"
+
+showIPv4 :: Word32 -> String
+showIPv4 address =
+  intercalate "." [show (address `shiftR` 24 .&. 0xFF), show (address `shiftR` 16 .&. 0xFF), show (address `shiftR` 8 .&. 0xFF), show (address .&. 0xFF)]
+
+hexBytes :: ByteString -> String
+hexBytes = concatMap (\b -> let (hi, lo) = (fromIntegral b `div` 16, fromIntegral b `mod` 16) in [hexDigit hi, hexDigit lo]) . BS.unpack
+
+hexDigit :: Int -> Char
+hexDigit n = "0123456789abcdef" !! n
