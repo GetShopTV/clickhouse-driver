@@ -27,6 +27,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as ByteString
 import Data.ByteString.Lazy qualified as BSL
 import Data.List (intercalate)
+import Data.Maybe (isJust)
 import Data.Ratio ((%))
 import Data.Text qualified as Text
 import Data.Time.Calendar (fromGregorian)
@@ -79,9 +80,50 @@ run settings = do
   let version = showCell (Vector.head (Vector.head versionRows))
   putStrLn ("server version: " <> version)
 
-  basic settings
-  wideTypes settings
+  readOnly <- isJust <$> lookupEnv "CH_READONLY"
+  if readOnly
+    then externalProbe settings
+    else do
+      basic settings
+      wideTypes settings
   putStrLn "integration run finished"
+
+-- Read-only probe: no DDL, exercises multipart external tables (the pattern
+-- used for binary query parameters).
+externalProbe :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+externalProbe settings = do
+  let ids = externalTable "ids" [("value", "UInt64")] [[ClickUInt64 1], [ClickUInt64 2]]
+      users =
+        externalTable
+          "users"
+          [("id", "UInt64"), ("name", "String")]
+          [ [ClickUInt64 1, ClickString "alice"]
+          , [ClickUInt64 2, ClickString "bob"]
+          ]
+
+  idsBack <-
+    runQueryWithExternals settings [ids] "SELECT value FROM ids ORDER BY value"
+  verifyEqual
+    "external scalar table"
+    (map Vector.fromList [[ClickUInt64 1], [ClickUInt64 2]])
+    (Vector.toList idsBack)
+
+  usersBack <-
+    runQueryWithExternals
+      settings
+      [ids, users]
+      "SELECT id, name FROM users ORDER BY id"
+  verifyEqual
+    "external typed table"
+    ( map
+        Vector.fromList
+        [ [ClickUInt64 1, ClickString "alice"]
+        , [ClickUInt64 2, ClickString "bob"]
+        ]
+    )
+    (Vector.toList usersBack)
+
+  putStrLn "ok: external tables (multipart RowBinary) round-tripped"
 
 basic :: ClickhouseConnectionSettings ClientHTTP -> IO ()
 basic settings = do

@@ -35,7 +35,9 @@ module Database.ClickHouse
   , newHTTPTransport
     -- * Queries
   , sourceQuery
+  , sourceQueryWithExternals
   , runQuery
+  , runQueryWithExternals
   , runInsert
   , runCommand
   ) where
@@ -74,6 +76,17 @@ sourceQuery ::
 sourceQuery settings sql =
   sendSource settings (selectRequest sql) .| decodeRowBinaryC
 
+-- | Stream the rows of a SELECT that references temporary external tables
+-- (multipart/form-data, RowBinary payloads).
+sourceQueryWithExternals ::
+  (ClickhouseClient client, MonadResource m, MonadUnliftIO m) =>
+  ClickhouseConnectionSettings client ->
+  [ExternalTable] ->
+  ByteString ->
+  ConduitT () (Vector ClickhouseType) m ()
+sourceQueryWithExternals settings externals sql =
+  sendSource settings (externalSelectRequest externals sql) .| decodeRowBinaryC
+
 -- | Run a query and collect every row.
 runQuery ::
   ClickhouseConnectionSettings ClientHTTP ->
@@ -82,6 +95,16 @@ runQuery ::
 runQuery settings sql =
   Vector.fromList
     <$> runResourceT (runConduit (sourceQuery settings sql .| collect))
+
+-- | Run a query with external tables attached and collect every row.
+runQueryWithExternals ::
+  ClickhouseConnectionSettings ClientHTTP ->
+  [ExternalTable] ->
+  ByteString ->
+  IO (Vector (Vector ClickhouseType))
+runQueryWithExternals settings externals sql =
+  Vector.fromList
+    <$> runResourceT (runConduit (sourceQueryWithExternals settings externals sql .| collect))
 
 -- | Insert rows into a table.
 --

@@ -42,6 +42,30 @@ Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
 row at a time. Plain helpers `runQuery`, `runInsert`, `runCommand` wrap the
 conduit for simple use.
 
+## Binary parameters (external tables)
+
+Instead of rendering `param_*` values as text, pass parameter data as
+temporary external tables in `RowBinary`. The statement references the table
+by name:
+
+```haskell
+let ids =
+      externalTable
+        "ids"
+        [("value", "UInt64")]
+        [[ClickUInt64 1], [ClickUInt64 2]]
+
+rows <-
+  runQueryWithExternals
+    conn
+    [ids]
+    "SELECT count() FROM events WHERE user_id IN (SELECT value FROM ids)"
+```
+
+Tables are attached as `multipart/form-data` parts (data in `RowBinary`,
+plus `<name>_format` and `<name>_structure` metadata). Use
+`sourceQueryWithExternals` to stream the rows instead of collecting them.
+
 ## hcurl agent
 
 The transport never creates an agent implicitly.  The caller owns it and

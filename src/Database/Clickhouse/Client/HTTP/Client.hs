@@ -42,11 +42,16 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Resource (MonadResource)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
+import Data.ByteString.Builder (byteString, toLazyByteString)
+import Data.ByteString.Lazy qualified as BSL
 import Data.Conduit (ConduitT, yield)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
+import Data.Vector qualified as Vector
 import Database.Clickhouse.Client.HTTP.Types (ClickhouseHTTPSettings (..))
 import Database.Clickhouse.Client.Types
+import Database.Clickhouse.Conversion.Binary.Encode (encodeRows)
+import GHC.Clock (getMonotonicTimeNSec)
 import HCurl.Agent (Agent)
 import HCurl.Agent qualified as CurlAgent
 import HCurl.Request qualified as Curl
@@ -55,6 +60,7 @@ import HCurl.Simple qualified as CurlSimple
 import HCurl.Streaming qualified as CurlStream
 import HCurl.Types qualified as CurlTypes
 import Network.HTTP.Types (renderQuery)
+import Numeric (showHex)
 import System.IO.Unsafe (unsafePerformIO)
 import UnliftIO (MonadUnliftIO)
 
@@ -108,8 +114,9 @@ sendSourceHTTP ::
 sendSourceHTTP settings request = do
   let ClickhouseHTTPTransport {transportOptions = _, transportAgent = agent} =
         connectionSettings settings
+  httpRequest <- liftIO (buildHCurlRequest settings request)
   outcome <-
-    lift $ CurlStream.httpStreaming agent (buildHCurlRequest settings request)
+    lift $ CurlStream.httpStreaming agent httpRequest
   case outcome of
     Left code -> liftIO $ throwIO $ ClickhouseTransportException (show code)
     Right StreamingResponse {info = HttpParts {statusCode}, body = reader, completion} ->
@@ -163,22 +170,21 @@ drainBody reader = go []
 buildHCurlRequest ::
   ClickhouseConnectionSettings ClientHTTP ->
   CHRequest ->
-  Curl.Request
+  IO Curl.Request
 buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
-  Curl.Request
-    { Curl.host = endpoint
-    , Curl.timeoutMS = responseTimeoutMS httpOptions
-    , Curl.connectionTimeoutMS = connectionTimeoutMS httpOptions
-    , Curl.lowSpeedLimit =
-        Curl.LowSpeedLimit
-          { Curl.lowSpeed = fst lowSpeed
-          , Curl.timeout = snd lowSpeed
-          }
-    , Curl.body = requestBody
-    , Curl.method = CurlTypes.Post
-    , Curl.headers = Curl.HeaderList requestHeaders
-    , Curl.extraOptions = []
-    }
+  case requestExternals of
+    [] -> pure (makeRequest requestBody authAndFormatHeaders)
+    _ -> do
+      whenJust requestData $ \_ ->
+        error "external tables cannot be combined with an INSERT payload"
+      boundary <- mkBoundary
+      let multipartHeaders =
+            authAndFormatHeaders
+              <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
+      pure $
+        makeRequest
+          (CurlTypes.Buffer (multipartBody boundary multipartFields))
+          multipartHeaders
   where
     httpOptions = transportOptions connectionSettings
     endpoint =
@@ -197,13 +203,77 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
       Nothing
         | BS.null requestSql -> CurlTypes.Empty
         | otherwise -> CurlTypes.Buffer requestSql
-    requestHeaders =
+    authAndFormatHeaders =
       [ "X-ClickHouse-User: " <> TE.encodeUtf8 username
       , "X-ClickHouse-Key: " <> TE.encodeUtf8 password
       , "X-ClickHouse-Database: " <> TE.encodeUtf8 database
       ]
         <> maybe [] (\format -> ["X-ClickHouse-Format: " <> format]) requestResponseFormat
     lowSpeed = lowSpeedLimit httpOptions
+    makeRequest body headers =
+      Curl.Request
+        { Curl.host = endpoint
+        , Curl.timeoutMS = responseTimeoutMS httpOptions
+        , Curl.connectionTimeoutMS = connectionTimeoutMS httpOptions
+        , Curl.lowSpeedLimit =
+            Curl.LowSpeedLimit
+              { Curl.lowSpeed = fst lowSpeed
+              , Curl.timeout = snd lowSpeed
+              }
+        , Curl.body = body
+        , Curl.method = CurlTypes.Post
+        , Curl.headers = Curl.HeaderList headers
+        , Curl.extraOptions = []
+        }
+    multipartFields =
+      [ MultipartField "query" Nothing Nothing requestSql
+      ]
+        <> concatMap externalFields requestExternals
+    externalFields ExternalTable {..} =
+      [ MultipartField (externalTableName <> "_format") Nothing Nothing "RowBinary"
+      , MultipartField (externalTableName <> "_structure") Nothing Nothing (renderStructure externalColumns)
+      , MultipartField
+          externalTableName
+          (Just externalTableName)
+          (Just "application/octet-stream")
+          (encodeRows (map Vector.fromList externalRows))
+      ]
+
+data MultipartField = MultipartField
+  { fieldName :: !ByteString
+  , fieldFileName :: !(Maybe ByteString)
+  , fieldContentType :: !(Maybe ByteString)
+  , fieldContent :: !ByteString
+  }
+
+renderStructure :: [(ByteString, ByteString)] -> ByteString
+renderStructure =
+  BS.intercalate ", " . map (\(name, typ) -> name <> " " <> typ)
+
+mkBoundary :: IO ByteString
+mkBoundary = do
+  nanos <- getMonotonicTimeNSec
+  pure ("----clickhouse-driver-" <> BS.pack (map (fromIntegral . fromEnum) (showHex nanos "")))
+
+multipartBody :: ByteString -> [MultipartField] -> ByteString
+multipartBody boundary fields =
+  BSL.toStrict . toLazyByteString $
+    foldMap (part boundary) fields <> closing boundary
+  where
+    part b MultipartField {..} =
+      byteString ("--" <> b <> "\r\n")
+        <> byteString ("Content-Disposition: form-data; name=\"" <> fieldName <> "\"")
+        <> maybe mempty (\f -> byteString ("; filename=\"" <> f <> "\"")) fieldFileName
+        <> byteString "\r\n"
+        <> maybe mempty (\ct -> byteString ("Content-Type: " <> ct <> "\r\n")) fieldContentType
+        <> byteString "\r\n"
+        <> byteString fieldContent
+        <> byteString "\r\n"
+    closing b = byteString ("--" <> b <> "--\r\n")
+
+whenJust :: Monad m => Maybe a -> (a -> m ()) -> m ()
+whenJust (Just a) f = f a
+whenJust Nothing _ = pure ()
 
 encodeUtf8Show :: Show a => a -> ByteString
 encodeUtf8Show = TE.encodeUtf8 . Text.pack . show

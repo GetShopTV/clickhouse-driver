@@ -18,8 +18,12 @@ module Database.Clickhouse.Client.Types
     -- * Requests
   , CHRequest (..)
   , selectRequest
+  , externalSelectRequest
   , insertRequest
   , commandRequest
+  , ExternalTable (..)
+  , externalTable
+  , scalarExternal
     -- * Values
   , ClickhouseType (..)
     -- * Exceptions
@@ -105,7 +109,31 @@ data CHRequest = CHRequest
     requestParams :: ![(ByteString, ByteString)]
   , -- | @X-ClickHouse-Format@ header override.
     requestResponseFormat :: !(Maybe ByteString)
+  , -- | Temporary external tables attached to the request as multipart
+    -- parts (only meaningful for HTTP).
+    requestExternals :: ![ExternalTable]
   }
+
+-- | A temporary table attached to a query as an external data part.
+--
+-- The SQL must reference the table by 'externalTableName' (e.g.
+-- @WHERE id IN (SELECT value FROM ids)@).  Columns are declared with their
+-- ClickHouse types; rows are encoded as @RowBinary@, so no textual rendering
+-- of values is involved.
+data ExternalTable = ExternalTable
+  { externalTableName :: !ByteString
+  , externalColumns :: ![(ByteString, ByteString)]
+  , externalRows :: ![[ClickhouseType]]
+  }
+
+-- | Smart constructor for an 'ExternalTable'.
+externalTable :: ByteString -> [(ByteString, ByteString)] -> [[ClickhouseType]] -> ExternalTable
+externalTable = ExternalTable
+
+-- | A single-value external table with one column named @value@.
+scalarExternal :: ByteString -> ByteString -> ClickhouseType -> ExternalTable
+scalarExternal name valueType value =
+  ExternalTable name [("value", valueType)] [[value]]
 
 -- | A SELECT (or any statement whose RowBinary-with-names response we want
 -- to stream and decode).
@@ -116,6 +144,18 @@ selectRequest sql =
     , requestData = Nothing
     , requestParams = jsonAsStringSettings
     , requestResponseFormat = Just defaultResponseFormat
+    , requestExternals = []
+    }
+
+-- | A SELECT with temporary external tables attached (multipart/form-data).
+externalSelectRequest :: [ExternalTable] -> ByteString -> CHRequest
+externalSelectRequest externals sql =
+  CHRequest
+    { requestSql = sql
+    , requestData = Nothing
+    , requestParams = jsonAsStringSettings
+    , requestResponseFormat = Just defaultResponseFormat
+    , requestExternals = externals
     }
 
 -- | An INSERT whose data payload is streamed from the body. The statement
@@ -127,6 +167,7 @@ insertRequest statement payload =
     , requestData = Just payload
     , requestParams = jsonAsStringSettings
     , requestResponseFormat = Nothing
+    , requestExternals = []
     }
 
 -- | A statement whose response body is not interesting (DDL, SET, ...).
@@ -137,6 +178,7 @@ commandRequest sql =
     , requestData = Nothing
     , requestParams = []
     , requestResponseFormat = Nothing
+    , requestExternals = []
     }
 
 -- | JSON columns are only serialisable as RowBinary Strings when the server
