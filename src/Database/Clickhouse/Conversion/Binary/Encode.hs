@@ -20,6 +20,7 @@ module Database.Clickhouse.Conversion.Binary.Encode
   ) where
 
 import Data.Bits (shiftR, (.&.), (.|.))
+import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder
@@ -85,6 +86,9 @@ encodeValue = \case
   ClickIPv6 bytes
     | BS.length bytes /= 16 -> error "ClickIPv6: expected 16 bytes"
     | otherwise -> byteString bytes
+  ClickJSON value ->
+    let bytes = BSL.toStrict (Aeson.encode value)
+     in encodeLEB128 (fromIntegral (BS.length bytes)) <> byteString bytes
   ClickNullable Nothing -> word8 1
   ClickNullable (Just value) -> word8 0 <> encodeValue value
   ClickArray values ->

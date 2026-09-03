@@ -58,6 +58,7 @@ data ChType
   | ChUuid
   | ChIPv4
   | ChIPv6
+  | ChJSON
   | ChEnum !Int -- ^ underlying integer width in bits (8 or 16)
   | ChNullable !ChType
   | ChLowCardinality !ChType
@@ -202,6 +203,7 @@ plainType name = case name of
   "UUID" -> Right ChUuid
   "IPv4" -> Right ChIPv4
   "IPv6" -> Right ChIPv6
+  "JSON" -> Right ChJSON
   unsupported -> Left ("unsupported ClickHouse type: " <> show unsupported)
 
 readIdent :: ByteString -> Either String (ByteString, ByteString)

@@ -10,7 +10,10 @@ multi interface) and the wire format is binary:
   carries column names and types, so rows decode into dynamically typed
   `ClickhouseType` vectors without a client-side schema;
 * result rows are decoded and yielded incrementally (a conduit), so large
-  result sets can be consumed as a stream.
+  result sets can be consumed as a stream;
+* `JSON` columns travel as RowBinary Strings (the driver sets
+  `output_format_binary_write_json_as_string` /
+  `input_format_binary_read_json_as_string`) and decode into `Aeson.Value`.
 
 ## Usage
 

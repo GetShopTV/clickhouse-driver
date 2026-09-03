@@ -30,6 +30,7 @@ module Database.Clickhouse.Client.Types
 
 import Control.Exception (Exception)
 import Control.Monad.Trans.Resource (MonadResource)
+import Data.Aeson (Value)
 import Data.Conduit (ConduitT)
 import Data.ByteString (ByteString)
 import Data.Int (Int16, Int32, Int64, Int8)
@@ -113,7 +114,7 @@ selectRequest sql =
   CHRequest
     { requestSql = sql
     , requestData = Nothing
-    , requestParams = []
+    , requestParams = jsonAsStringSettings
     , requestResponseFormat = Just defaultResponseFormat
     }
 
@@ -124,7 +125,7 @@ insertRequest statement payload =
   CHRequest
     { requestSql = statement
     , requestData = Just payload
-    , requestParams = []
+    , requestParams = jsonAsStringSettings
     , requestResponseFormat = Nothing
     }
 
@@ -137,6 +138,14 @@ commandRequest sql =
     , requestParams = []
     , requestResponseFormat = Nothing
     }
+
+-- | JSON columns are only serialisable as RowBinary Strings when the server
+-- knows about these two settings (they are no-ops for other columns).
+jsonAsStringSettings :: [(ByteString, ByteString)]
+jsonAsStringSettings =
+  [ ("output_format_binary_write_json_as_string", "1")
+  , ("input_format_binary_read_json_as_string", "1")
+  ]
 
 -- | A dynamically typed ClickHouse value.
 --
@@ -178,6 +187,10 @@ data ClickhouseType
   | ClickDecimal64 !Integer
   | ClickDecimal128 !Integer
   | ClickDecimal256 !Integer
+  | -- | @JSON@ column; travels as RowBinary String when the server runs with
+    -- @*_binary_*_json_as_string@ settings (the driver sets them on SELECT
+    -- and INSERT requests).
+    ClickJSON !Value
   | ClickNullable !(Maybe ClickhouseType)
   | ClickArray !(Vector ClickhouseType)
   | ClickTuple !(Vector ClickhouseType)

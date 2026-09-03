@@ -5,11 +5,14 @@ module Main (main) where
 
 import Control.Monad (forM_, unless)
 import Control.Monad.Trans.Resource (runResourceT)
+import Data.Aeson ((.=))
+import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BSL
 import Data.Conduit (ConduitT, await, runConduit, yield, (.|))
+import Data.List (isInfixOf)
 import Data.Ratio ((%))
 import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
@@ -92,6 +95,13 @@ checks =
       case decodeRowBinaryBuffer (BS.take 5 buffer) of
         Left _ -> Right ()
         Right _ -> Left "expected a truncation error, got a successful decode"
+  , check "unsupported column types fail loudly" $ do
+      case parseChType "Point" of
+        Left err ->
+          if "unsupported" `isInfixOf` err
+            then Right ()
+            else Left ("unexpected error: " <> err)
+        Right _ -> Left "expected Point to be rejected"
   , checkIO "streaming decode across chunk boundaries matches buffer decode" $ do
       let buffer = makeBuffer columnNames typeNames rows
       streamed <- runResourceT (runConduit (sourceChunks (chunksOf 7 buffer) .| decodeRowBinaryC .| collect))
@@ -123,6 +133,7 @@ typeNameCases =
   , ("UUID", ChUuid)
   , ("IPv4", ChIPv4)
   , ("IPv6", ChIPv6)
+  , ("JSON", ChJSON)
   , ("Enum8('a' = 1, 'b' = 2)", ChEnum 8)
   , ("Nullable(String)", ChNullable ChString)
   , ("LowCardinality(String)", ChLowCardinality ChString)
@@ -153,6 +164,7 @@ columnNames =
   , "ip4"
   , "ip6"
   , "dec256"
+  , "js"
   ]
 
 typeNames :: [ByteString]
@@ -177,6 +189,7 @@ typeNames =
   , "IPv4"
   , "IPv6"
   , "Decimal(40, 2)"
+  , "JSON"
   ]
 
 rows :: [[ClickhouseType]]
@@ -201,6 +214,8 @@ rows =
     , ClickIPv4 0x01020304
     , ClickIPv6 (BS.pack [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
     , ClickDecimal256 12345
+    , ClickJSON
+        (Aeson.object ["s" .= ("ok" :: String), "n" .= (1 :: Int), "arr" .= ([1, 2] :: [Int])])
     ]
   , [ ClickUInt64 2
     , ClickInt32 0
@@ -222,6 +237,7 @@ rows =
     , ClickIPv4 0
     , ClickIPv6 (BS.replicate 16 0)
     , ClickDecimal256 0
+    , ClickJSON (Aeson.object [])
     ]
   ]
 

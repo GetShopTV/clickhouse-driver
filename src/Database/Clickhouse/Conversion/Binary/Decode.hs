@@ -22,6 +22,7 @@ module Database.Clickhouse.Conversion.Binary.Decode
 import Control.Exception (throwIO)
 import Control.Monad (replicateM)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Aeson qualified as Aeson
 import Data.Bits (shiftL, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -172,6 +173,9 @@ pLEB128 = P $ go 0 0
               then PDone value rest
               else go value (shift + 7) rest
 
+pFail :: String -> P a
+pFail message = P (const (PFail message))
+
 foldWord32 :: [Word8] -> Word32
 foldWord32 = go 0 0
   where
@@ -229,6 +233,11 @@ decodeValue = \case
     pure (ClickUuid (fromWords64 hi lo))
   ChIPv4 -> ClickIPv4 <$> pWord32le
   ChIPv6 -> ClickIPv6 <$> pBytes 16
+  ChJSON -> do
+    bytes <- pStringBytes
+    case Aeson.eitherDecodeStrict' bytes of
+      Left err -> pFail ("invalid JSON column value: " <> err)
+      Right value -> pure (ClickJSON value)
   ChEnum 8 -> ClickInt8 <$> pInt8
   ChEnum 16 -> ClickInt16 <$> pInt16le
   ChEnum _ -> ClickInt64 <$> pInt64le

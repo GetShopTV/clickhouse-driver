@@ -11,6 +11,7 @@ module Database.Clickhouse.Conversion.ToClickhouse
   ) where
 
 import Data.ByteString (ByteString)
+import Data.Aeson (Value)
 import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Text (Text)
 import Data.Text.Encoding qualified as Text
@@ -70,6 +71,9 @@ instance ToClickhouseType UTCTime where
 
 instance ToClickhouseType UUID where
   toClickhouseType = ClickUuid
+
+instance ToClickhouseType Value where
+  toClickhouseType = ClickJSON
 
 instance (ToClickhouseType a) => ToClickhouseType (Maybe a) where
   toClickhouseType = ClickNullable . fmap toClickhouseType
