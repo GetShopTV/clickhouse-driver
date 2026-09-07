@@ -8,6 +8,7 @@ data ClickhouseHTTPSettings = ClickhouseHTTPSettings
     { clickhouseUrl :: !String
     , port :: !Int
     , responseTimeout :: !ResponseTimeout
+    , format :: String
     }
     deriving (Generic, Show, Eq)
 
@@ -17,4 +18,5 @@ instance Default ClickhouseHTTPSettings where
             { clickhouseUrl = "http://localhost"
             , port = 8123
             , responseTimeout = responseTimeoutDefault
+            , format = "CSVWithNamesAndTypes"
             }

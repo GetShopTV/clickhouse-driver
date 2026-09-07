@@ -7,20 +7,25 @@
     haskell-flake.url = "github:srid/haskell-flake";
   };
 
-  outputs = inputs @ {
-    self,
-    flake-parts,
-    nixpkgs,
-    ...
-  }:
-    flake-parts.lib.mkFlake {inherit inputs;} {
+  outputs =
+    inputs@{
+      self,
+      flake-parts,
+      nixpkgs,
+      ...
+    }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
       systems = nixpkgs.lib.systems.flakeExposed;
       imports = [
         inputs.haskell-flake.flakeModule
       ];
-      perSystem = {self', ...}: {
+      perSystem = { self', ... }: {
         haskellProjects.default = {
           settings = {
+            safe-decimal = {
+              broken = false;
+              check = false;
+            };
             cassava-conduit = {
               broken = false;
               check = false;

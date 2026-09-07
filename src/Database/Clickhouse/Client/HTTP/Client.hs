@@ -13,6 +13,7 @@ import Database.Clickhouse.Client.Types
 
 import Conduit
 import Data.ByteString
+import Data.ByteString.Char8 qualified as BSC8
 import Data.Function
 import Data.String
 import Data.String.Conversions
@@ -49,6 +50,7 @@ mkClickHouseRequestSource settings (Query query) = httpSource chRequest getRespo
             & setRequestPort port
             & setRequestMethod "POST"
             & setRequestResponseTimeout responseTimeout
+            & setQueryString [(("default_format", Just . BSC8.pack $ format))]
 
 mkClickHouseRequestSourceAсquire :: (MonadIO m) => ClickhouseConnectionSettings ClientHTTP -> Query -> Acquire (ConduitM i ByteString m ())
 mkClickHouseRequestSourceAсquire settings (Query query) = httpSourceA chRequest getResponseBody
@@ -61,14 +63,14 @@ mkClickHouseRequestSourceAсquire settings (Query query) = httpSourceA chRequest
             & setRequestPort port
             & setRequestMethod "POST"
             & setRequestResponseTimeout responseTimeout
+            & setQueryString [(("default_format", Just . BSC8.pack $ format))]
 
 chDefaultHeadersKV :: ClickhouseConnectionSettings ClientHTTP -> RequestHeaders
 chDefaultHeadersKV ClickhouseConnectionSettings{..} =
     [ ("X-ClickHouse-User", cs username)
     , ("X-ClickHouse-Key", cs password)
     , -- Used only when selecting data
-      ("X-ClickHouse-Format", "CSVWithNamesAndTypes")
-    , ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
+      ("X-ClickHouse-Database", TE.encodeUtf8 dbScheme)
     ]
 
 httpSourceA ::
