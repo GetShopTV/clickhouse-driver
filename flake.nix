@@ -10,7 +10,7 @@
 
     # Same revision as the `source-repository-package` pin in cabal.project.
     hcurl = {
-      url = "github:Reykudo/hcurl/04647ddd851d0567e93a3a473ca61d8e8220967f";
+      url = "github:Reykudo/hcurl/b9b16d6f1f676904ce5fd70ad5384f3d144681a3";
       flake = false;
     };
   };

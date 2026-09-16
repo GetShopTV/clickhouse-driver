@@ -212,9 +212,8 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
         <> maybe [] (\format -> ["X-ClickHouse-Format: " <> format]) requestResponseFormat
     lowSpeed = lowSpeedLimit httpOptions
     makeRequest body headers =
-      Curl.Request
-        { Curl.host = endpoint
-        , Curl.timeoutMS = responseTimeoutMS httpOptions
+      (Curl.defaultRequest endpoint)
+        { Curl.timeoutMS = responseTimeoutMS httpOptions
         , Curl.connectionTimeoutMS = connectionTimeoutMS httpOptions
         , Curl.lowSpeedLimit =
             Curl.LowSpeedLimit
@@ -224,7 +223,6 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
         , Curl.body = body
         , Curl.method = CurlTypes.Post
         , Curl.headers = Curl.HeaderList headers
-        , Curl.extraOptions = []
         }
     multipartFields =
       [ MultipartField "query" Nothing Nothing requestSql

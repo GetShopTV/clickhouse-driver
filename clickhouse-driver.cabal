@@ -77,3 +77,20 @@ test-suite clickhouse-driver-test
     , uuid
     , vector
   default-language: GHC2021
+
+test-suite clickhouse-driver-integration
+  import:           warnings
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test/integration
+  ghc-options:      -threaded -rtsopts "-with-rtsopts=-T"
+  build-depends:
+      base
+    , bytestring
+    , clickhouse-driver
+    , conduit
+    , network
+    , resourcet
+    , text
+    , vector
+  default-language: GHC2021

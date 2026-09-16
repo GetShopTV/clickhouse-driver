@@ -11,6 +11,12 @@ multi interface) and the wire format is binary:
   `ClickhouseType` vectors without a client-side schema;
 * result rows are decoded and yielded incrementally (a conduit), so large
   result sets can be consumed as a stream;
+* the response body is read through hcurl's bounded streaming reader and
+  decoded row by row, so consumers that do not retain rows (folds, filters,
+  writers) keep memory bounded per decoded row instead of holding the whole
+  result — `runQuery`/`runQueryWithExternals` collect by design; stopping a
+  stream early releases the transfer and the agent stays usable for later
+  queries;
 * `JSON` columns travel as RowBinary Strings (the driver sets
   `output_format_binary_write_json_as_string` /
   `input_format_binary_read_json_as_string`) and decode into `Aeson.Value`.
@@ -43,8 +49,46 @@ let conn' = conn { username = "report", password = "secret", database = "analyti
 ```
 
 Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
-row at a time. Plain helpers `runQuery`, `runInsert`, `runCommand` wrap the
-conduit for simple use.
+row at a time, as soon as the server sends it. Plain helpers `runQuery`,
+`runInsert`, `runCommand` wrap the conduit for simple use; `runQuery`
+collects, so prefer `sourceQuery` for large results:
+
+```haskell
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+import Control.Monad.Trans.Resource (runResourceT)
+import Data.Conduit (ConduitT, await, runConduit, (.|))
+import Data.Vector (Vector)
+import Data.Vector qualified as Vector
+import Database.ClickHouse
+
+streamedSum :: ClickhouseConnectionSettings ClientHTTP -> IO Integer
+streamedSum conn =
+  runResourceT $
+    runConduit $
+      sourceQuery conn "SELECT number FROM numbers(1000000)" .| foldNumberRows
+
+foldNumberRows :: Monad m => ConduitT (Vector ClickhouseType) o m Integer
+foldNumberRows = go 0
+  where
+    go !total = await >>= \case
+      Nothing -> pure total
+      Just row -> case Vector.toList row of
+        [ClickUInt64 value] -> go (total + toInteger value)
+        _ -> error "unexpected row shape"
+
+main :: IO ()
+main = do
+  conn <- connectHTTP defaultHTTPSettings
+  total <- streamedSum conn
+  print total
+```
+
+Consuming only a prefix of the conduit is safe: closing the resource scope
+aborts the underlying transfer and the connection (hcurl agent) can be used
+for the next query.
 
 ## Binary parameters (external tables)
 
@@ -100,11 +144,27 @@ by `newManagedAgent` do that automatically.
 server; it reads `CH_URL`, `CH_PORT`, `CH_DATABASE`, `CH_USER`,
 `CH_PASSWORD` from the environment. See
 [`rollout/2026-09-03-clickhouse-local.md`](rollout/2026-09-03-clickhouse-local.md)
-for the recorded run.
+for the original recorded run and
+[`rollout/2026-09-16-hcurl-b9b16d6-streaming.md`](rollout/2026-09-16-hcurl-b9b16d6-streaming.md)
+for the streaming validation after the hcurl pin bump.
+
+`cabal test` additionally runs `clickhouse-driver-integration`, which checks
+the streaming behaviour against a live server: a large SELECT folded without
+materialising the result, rows arriving before the response completes, early
+termination cancelling the transfer while the agent stays usable, transport
+truncation and server errors, plus INSERT and external-table round trips. It
+reads the same `CH_*` variables and reports a skip when `CH_URL` is unset.
+
+Those checks are read-only by default. The INSERT round trips require
+`CH_INTEGRATION_ALLOW_WRITES=1`; when enabled they create and drop
+uniquely-named throwaway tables, so point `CH_URL` at a disposable server or
+database whose data may be modified.
 
 ## Development
 
 `nix develop` (or `direnv allow`) provides GHC 9.10, cabal-install, `c2hs`,
 pkg-config and the libcurl/libuv development files. The pinned `hcurl`
 revision is declared in `cabal.project` (and mirrored as a flake input);
-cabal fetches and builds it from source.
+cabal fetches and builds it from source. The current pin is
+`b9b16d6f1f676904ce5fd70ad5384f3d144681a3` (upstream `master`; hcurl publishes
+no tags, so the revision is pinned explicitly).

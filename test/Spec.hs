@@ -3,7 +3,10 @@
 
 module Main (main) where
 
+import Control.Concurrent.MVar (newEmptyMVar, takeMVar)
+import Control.Exception (try)
 import Control.Monad (forM_, unless)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (runResourceT)
 import Data.Aeson ((.=))
 import Data.Aeson qualified as Aeson
@@ -11,8 +14,9 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ByteString.Lazy qualified as BSL
-import Data.Conduit (runConduit, (.|))
+import Data.Conduit (runConduit, yield, (.|))
 import Data.Conduit.Combinators (sinkList)
+import Data.Conduit.Combinators qualified as ConduitC
 import Data.Conduit.List (sourceList)
 import Data.List (isInfixOf)
 import Data.Ratio ((%))
@@ -20,7 +24,7 @@ import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID (fromWords64)
 import Data.Vector qualified as Vector
-import Database.Clickhouse.Client.Types (ClickhouseType (..))
+import Database.Clickhouse.Client.Types (ClickhouseDecodeException (..), ClickhouseType (..))
 import Database.Clickhouse.Conversion.Binary.Decode
   ( decodeRowBinaryBuffer
   , decodeRowBinaryC
@@ -36,6 +40,7 @@ import Database.Clickhouse.Conversion.Types
   )
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
+import System.Timeout (timeout)
 
 main :: IO ()
 main = do
@@ -113,6 +118,65 @@ checks =
           pure $ do
             assertEq "streamed equals reference" reference streamed
             assertEq "streamed row count" (length rows) (length streamed)
+  , checkIO "streaming decode matches buffer decode at every chunk boundary" $ do
+      let buffer = makeBuffer columnNames typeNames rows
+          sizes = [1, 2, 3, 5, 7, 13, 64, 257]
+      results <-
+        mapM
+          ( \size -> do
+              decoded <-
+                runResourceT
+                  (runConduit (sourceList (chunksOf size buffer) .| decodeRowBinaryC .| sinkList))
+              pure (size, decoded)
+          )
+          sizes
+      pure $ case decodeRowBinaryBuffer buffer of
+        Left err -> Left ("reference decode failed: " <> err)
+        Right reference -> do
+          mapM_
+            ( \(size, decoded) ->
+                assertEq ("chunk size " <> show size) reference decoded
+            )
+            results
+          assertEq "checked chunk size count" (length sizes) (length results)
+  , checkIO "truncated streams fail loudly instead of dropping rows" $ do
+      let buffer = makeBuffer ["n"] ["UInt64"] [[ClickUInt64 1], [ClickUInt64 2], [ClickUInt64 3]]
+          truncated = BS.take (BS.length buffer - 3) buffer
+      outcome <-
+        try
+          ( runResourceT
+              (runConduit (sourceList (chunksOf 5 truncated) .| decodeRowBinaryC .| sinkList))
+          )
+          :: IO (Either ClickhouseDecodeException [Vector.Vector ClickhouseType])
+      pure $ case outcome of
+        Right decoded ->
+          Left ("expected a decode exception, got " <> show (length decoded) <> " rows")
+        Left (ClickhouseDecodeException message)
+          | "end of input" `isInfixOf` message -> Right ()
+          | "truncated" `isInfixOf` message -> Right ()
+          | otherwise -> Left ("unexpected decode error: " <> message)
+  , checkIO "rows are decoded before the response stream ends" $ do
+      never <- newEmptyMVar
+      let headerBytes =
+            BSL.toStrict . toLazyByteString $
+              encodeLEB128 1
+                <> encodeValue (ClickString "n")
+                <> encodeValue (ClickString "UInt64")
+          rowBytes value = BSL.toStrict (toLazyByteString (encodeValue (ClickUInt64 value)))
+          source = do
+            yield (headerBytes <> rowBytes 1)
+            _ <- liftIO (takeMVar never)
+            yield (rowBytes 2)
+      outcome <-
+        timeout
+          10000000
+          (runResourceT (runConduit (source .| decodeRowBinaryC .| (ConduitC.take 1 .| sinkList))))
+      pure $ case outcome of
+        Nothing ->
+          Left
+            "decoder did not yield the first row before the stream ended (full buffering)"
+        Just [decoded] -> assertEq "decoded row" (Vector.fromList [ClickUInt64 1]) decoded
+        Just other -> Left ("unexpected decoded rows: " <> show other)
   ]
 
 typeNameCases :: [(ByteString, ChType)]

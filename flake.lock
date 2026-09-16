@@ -36,17 +36,17 @@
     "hcurl": {
       "flake": false,
       "locked": {
-        "lastModified": 1788454961,
-        "narHash": "sha256-+i++g6z9Rq8vZg4ZQCbkkdR+FmzwQlO3mgIg1wrPQd4=",
+        "lastModified": 1788522707,
+        "narHash": "sha256-Y/H47I2I1B4aWw2u6Oo+GAIuqni0pdRspfZifZAZqxs=",
         "owner": "Reykudo",
         "repo": "hcurl",
-        "rev": "04647ddd851d0567e93a3a473ca61d8e8220967f",
+        "rev": "b9b16d6f1f676904ce5fd70ad5384f3d144681a3",
         "type": "github"
       },
       "original": {
         "owner": "Reykudo",
         "repo": "hcurl",
-        "rev": "04647ddd851d0567e93a3a473ca61d8e8220967f",
+        "rev": "b9b16d6f1f676904ce5fd70ad5384f3d144681a3",
         "type": "github"
       }
     },
