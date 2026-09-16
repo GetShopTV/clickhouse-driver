@@ -4,7 +4,7 @@
 module Main (main) where
 
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar)
-import Control.Exception (try)
+import Control.Exception (evaluate, try)
 import Control.Monad (forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (runResourceT)
@@ -24,19 +24,26 @@ import Data.Time.Calendar (fromGregorian)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID (fromWords64)
 import Data.Vector qualified as Vector
-import Database.Clickhouse.Client.Types (ClickhouseDecodeException (..), ClickhouseType (..))
+import Database.Clickhouse.Client.Types
+  ( CHRequest (..), ClickhouseDecodeException (..), ClickhouseType (..), ClickhouseSettingsException (..)
+  , selectRequest, externalSelectRequest, insertRequest, effectiveRequestParams, settingEnabled
+  )
 import Database.Clickhouse.Conversion.Binary.Decode
   ( decodeRowBinaryBuffer
   , decodeRowBinaryC
+  , decodeRowBinaryBufferWithSettings
+  , decodeRowBinaryCWithSettings
+  , decodeRowsFromSchema
   )
 import Database.Clickhouse.Conversion.Binary.Encode
   ( encodeLEB128
-  , encodeRows
+  , encodeRowsWithSettings
   , encodeValue
   )
 import Database.Clickhouse.Conversion.Types
   ( ChType (..)
   , parseChType
+  , externalTypeContainsJSON
   )
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -69,6 +76,7 @@ assertEq label expected actual =
 
 checks :: [Check]
 checks =
+  settingsChecks <>
   [ check "type names parse to the expected schema" $ do
       mapM_
         ( \(input, expected) -> case parseChType input of
@@ -95,7 +103,7 @@ checks =
       goldenEncode "UInt256 1" (ClickUInt256 1) (BS.pack (1 : replicate 31 0))
   , check "header buffer round trip decodes to the original rows" $ do
       let buffer = makeBuffer columnNames typeNames rows
-      decoded <- decodeRowBinaryBuffer buffer
+      decoded <- decodeRowBinaryBufferWithSettings outputJSON buffer
       assertEq "decoded rows" (map Vector.fromList rows) decoded
   , check "truncated row is reported as an error" $ do
       let buffer = makeBuffer ["n"] ["UInt64"] [[ClickUInt64 42]]
@@ -142,8 +150,8 @@ checks =
         Right decoded -> Left ("expected a decode exception, got " <> show decoded)
   , checkIO "streaming decode across chunk boundaries matches buffer decode" $ do
       let buffer = makeBuffer columnNames typeNames rows
-      streamed <- runResourceT (runConduit (sourceList (chunksOf 7 buffer) .| decodeRowBinaryC .| sinkList))
-      case decodeRowBinaryBuffer buffer of
+      streamed <- runResourceT (runConduit (sourceList (chunksOf 7 buffer) .| decodeRowBinaryCWithSettings outputJSON .| sinkList))
+      case decodeRowBinaryBufferWithSettings outputJSON buffer of
         Left err -> pure (Left ("reference decode failed: " <> err))
         Right reference ->
           pure $ do
@@ -157,11 +165,11 @@ checks =
           ( \size -> do
               decoded <-
                 runResourceT
-                  (runConduit (sourceList (chunksOf size buffer) .| decodeRowBinaryC .| sinkList))
+                  (runConduit (sourceList (chunksOf size buffer) .| decodeRowBinaryCWithSettings outputJSON .| sinkList))
               pure (size, decoded)
           )
           sizes
-      pure $ case decodeRowBinaryBuffer buffer of
+      pure $ case decodeRowBinaryBufferWithSettings outputJSON buffer of
         Left err -> Left ("reference decode failed: " <> err)
         Right reference -> do
           mapM_
@@ -225,6 +233,7 @@ typeNameCases =
   , ("Date", ChDate)
   , ("Date32", ChDate32)
   , ("DateTime", ChDateTime)
+  , ("DateTime('UTC')", ChDateTime)
   , ("DateTime64(3, 'UTC')", ChDateTime64 3)
   , ("Decimal(18, 3)", ChDecimal 18 3)
   , ("UUID", ChUuid)
@@ -340,7 +349,7 @@ rows =
 
 makeBuffer :: [ByteString] -> [ByteString] -> [[ClickhouseType]] -> ByteString
 makeBuffer names typeNamesValues rowsValues =
-  header <> encodeRows (map Vector.fromList rowsValues)
+  header <> encodeRowsWithSettings inputJSON (map Vector.fromList rowsValues)
   where
     header =
       BSL.toStrict . toLazyByteString $
@@ -361,3 +370,125 @@ chunksOf size bytes
 
 runAll :: [Check] -> IO [(String, Either String ())]
 runAll = mapM (\(name, action) -> (name,) <$> action)
+
+outputJSON :: [(ByteString, ByteString)]
+outputJSON = [("output_format_binary_write_json_as_string", "1")]
+
+inputJSON :: [(ByteString, ByteString)]
+inputJSON = [("input_format_binary_read_json_as_string", "1")]
+
+settingsChecks :: [Check]
+settingsChecks =
+  [ check "external JSON detection does not require a supported response decoder" $
+      mapM_
+        (\typeName -> externalTypeContainsJSON typeName >>= assertEq (show typeName) False)
+        [ "DateTime('UTC')"
+        , "Decimal32(2)"
+        , "SimpleAggregateFunction(sum, UInt64)"
+        , "Tuple(JSON UInt64, label String)"
+        , "Tuple(`JSON` UInt64, \"label\" String)"
+        , "Enum8('JSON' = -1, 'other' = 1)"
+        , "Enum8('it\\'s JSON' = -1, 'it''s JSON' = 1)"
+        , "Array(Tuple(label String, timestamp DateTime('UTC')))"
+        ]
+  , check "external JSON detection traverses named fields and unknown wrappers" $
+      mapM_
+        (\typeName -> externalTypeContainsJSON typeName >>= assertEq (show typeName) True)
+        [ "JSON"
+        , "json"
+        , "JSON(max_dynamic_paths=16)"
+        , "Nullable(JSON)"
+        , "LowCardinality(JSON)"
+        , "Array(Tuple(value JSON))"
+        , "Tuple(JSON UInt64, value Array(JSON))"
+        , "Map(String, JSON)"
+        , "FutureWrapper(Tuple(`value` JSON))"
+        , "Array(Tuple(value jSoN))"
+        ]
+  , check "malformed external schemas fail closed" $
+      mapM_
+        ( \typeName -> case externalTypeContainsJSON typeName of
+            Left _ -> Right ()
+            Right _ -> Left ("accepted malformed schema: " <> show typeName)
+        )
+        ["Array(JSON", "Tuple(value JSON))", "Array(JSON) trailing", "Enum8('JSON = 1)"]
+  , check "request builders send no implicit settings" $
+      mapM_
+        (assertEq "params" [] . requestParams)
+        [selectRequest "SELECT 1", externalSelectRequest [] "SELECT 1", insertRequest "INSERT INTO t FORMAT RowBinary" ""]
+  , check "typed settings render scalar values exactly" $ do
+      let values =
+            [ ("bool", ClickBool True)
+            , ("false", ClickBool False)
+            , ("string", ClickString "a &+%?#=\NUL\255")
+            , ("int", ClickInt64 (-42))
+            , ("uint", ClickUInt64 maxBound)
+            , ("wide", ClickUInt256 maxBound)
+            , ("float32", ClickFloat32 1.25)
+            , ("float64", ClickFloat64 (-0.125))
+            ]
+      params <- either (Left . show) Right (effectiveRequestParams values (selectRequest "SELECT 1"))
+      assertEq "rendered" [("bool", "1"), ("false", "0"), ("string", "a &+%?#=\NUL\255"), ("int", "-42"), ("uint", "18446744073709551615"), ("wide", "115792089237316195423570985008687907853269984665640564039457584007913129639935"), ("float32", "1.25"), ("float64", "-0.125")] params
+  , check "unsupported and nonfinite settings are explicit errors" $
+      mapM_
+        ( \value -> case effectiveRequestParams [("bad_setting", value)] (selectRequest "SELECT 1") of
+            Left (ClickhouseSettingsException message) | "bad_setting" `isInfixOf` message && "finite Float" `isInfixOf` message -> Right ()
+            other -> Left ("unexpected result: " <> show other)
+        )
+        [ClickArray Vector.empty, ClickTuple Vector.empty, ClickMap Vector.empty, ClickNullable Nothing, ClickJSON (Aeson.object []), ClickFloat32 (0 / 0), ClickFloat64 (1 / 0), ClickFloat64 (-1 / 0)]
+  , check "settings cannot replace SQL parameters or connection identity" $
+      mapM_
+        ( \name -> case effectiveRequestParams [(name, ClickString "wrong")] (selectRequest "SELECT 1") of
+            Left _ -> Right ()
+            Right _ -> Left ("accepted reserved setting " <> name)
+        )
+        ["param_name", "query", "user", "password", "database", "format", "default_format"]
+  , check "request parameters take precedence without duplicates or altered SQL bindings" $ do
+      let request = (selectRequest "SELECT {value:String}"){requestParams = [("output_format_binary_write_json_as_string", "0"), ("output_format_binary_write_json_as_string", "1"), ("param_value", "a&+%")]}
+      params <- either (Left . show) Right (effectiveRequestParams [("output_format_binary_write_json_as_string", ClickBool True), ("max_threads", ClickInt8 2), ("max_threads", ClickInt8 3)] request)
+      assertEq "effective params" [("output_format_binary_write_json_as_string", "0"), ("param_value", "a&+%"), ("max_threads", "2")] params
+      assertEq "output disabled" False (settingEnabled "output_format_binary_write_json_as_string" params)
+  , check "typed JSON mode follows exact server boolean representations" $
+      mapM_
+        ( \(value, enabled) -> do
+            params <- either (Left . show) Right (effectiveRequestParams [("output_format_binary_write_json_as_string", value)] (selectRequest "SELECT 1"))
+            assertEq "mode" enabled (settingEnabled "output_format_binary_write_json_as_string" params)
+        )
+        [(ClickBool True, True), (ClickBool False, False), (ClickUInt8 1, True), (ClickInt8 0, False), (ClickString "TrUe", True), (ClickString "FALSE", False), (ClickUInt8 2, False)]
+  , check "JSON schema rejects missing or disabled output mode even with zero rows" $
+      mapM_
+        ( \typeName ->
+            mapM_
+              ( \params -> case decodeRowBinaryBufferWithSettings params (makeBuffer ["json"] [typeName] []) of
+                  Left message | "output_format_binary_write_json_as_string=1" `isInfixOf` message -> Right ()
+                  other -> Left ("unexpected result: " <> show other)
+              )
+              [[], inputJSON, [("output_format_binary_write_json_as_string", "0")]]
+        )
+        ["JSON", "Nullable(JSON)", "LowCardinality(JSON)", "Array(JSON)", "Tuple(String, Array(JSON))", "Map(String, JSON)", "Map(JSON, String)"]
+  , check "low level schema decoder defaults safely" $ case decodeRowsFromSchema [ChArray ChJSON] "" of
+      Left message | "output_format_binary_write_json_as_string=1" `isInfixOf` message -> Right ()
+      other -> Left ("unexpected result: " <> show other)
+  , checkIO "JSON stream rejects schema before awaiting any row bytes" $ do
+      never <- newEmptyMVar
+      let source = yield (makeBuffer ["json"] ["Array(JSON)"] []) >> liftIO (takeMVar never)
+      outcome <- timeout 1000000 (try (runResourceT (runConduit (source .| decodeRowBinaryC .| sinkList))) :: IO (Either ClickhouseDecodeException [Vector.Vector ClickhouseType]))
+      pure $ case outcome of
+        Just (Left (ClickhouseDecodeException message)) | "output_format_binary_write_json_as_string=1" `isInfixOf` message -> Right ()
+        _ -> Left "JSON schema did not fail promptly with an actionable error"
+  , checkIO "JSON input needs its own flag, including nested values" $ do
+      results <- mapM (\params -> try (evaluate (BS.length (encodeRowsWithSettings params [Vector.singleton (ClickArray (Vector.singleton (ClickJSON (Aeson.object []))))]))) :: IO (Either ClickhouseSettingsException Int)) [[], outputJSON]
+      pure $
+        mapM_
+          ( \result -> case result of
+              Left (ClickhouseSettingsException message) | "input_format_binary_read_json_as_string=1" `isInfixOf` message -> Right ()
+              _ -> Left "JSON encoded without the input flag"
+          )
+          results
+  , check "explicit nested JSON output decodes, including empty result" $ do
+      let value = ClickTuple (Vector.fromList [ClickArray (Vector.singleton (ClickJSON (Aeson.object ["n" .= (1 :: Int)])))])
+      decoded <- decodeRowBinaryBufferWithSettings outputJSON (makeBuffer ["json"] ["Tuple(Array(JSON))"] [[value]])
+      assertEq "nested value" [Vector.singleton value] decoded
+      empty <- decodeRowBinaryBufferWithSettings outputJSON (makeBuffer ["json"] ["Tuple(Array(JSON))"] [])
+      assertEq "empty JSON" [] empty
+  ]

@@ -23,13 +23,16 @@ module Database.Clickhouse.Conversion.Types
   , decimalWidthBytes
   , renderInsertStatement
   , defaultResponseFormat
+  , containsJSON
+  , externalTypeContainsJSON
   ) where
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as C8
-import Data.Char (isAlphaNum, isDigit, isSpace)
+import Data.Char (isAlphaNum, isDigit, isSpace, toUpper)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Text.ParserCombinators.ReadP qualified as P
 
 -- | Decoded shape of a ClickHouse column type.
 data ChType
@@ -66,6 +69,59 @@ data ChType
   | ChTuple ![ChType]
   | ChMap !ChType !ChType
   deriving stock (Show, Eq)
+
+containsJSON :: ChType -> Bool
+containsJSON schema = case schema of
+  ChJSON -> True
+  ChNullable inner -> containsJSON inner
+  ChLowCardinality inner -> containsJSON inner
+  ChArray inner -> containsJSON inner
+  ChTuple inners -> any containsJSON inners
+  ChMap key value -> containsJSON key || containsJSON value
+  _ -> False
+
+externalTypeContainsJSON :: ByteString -> Either String Bool
+externalTypeContainsJSON input =
+  case P.readP_to_S (P.skipSpaces *> typeName <* P.skipSpaces <* P.eof) (C8.unpack input) of
+    [(found, "")] -> Right found
+    _ -> Left ("cannot inspect external column type for JSON: " <> show input)
+  where
+    lexeme parser = parser <* P.skipSpaces
+    symbol = lexeme . P.char
+    identifier = lexeme (P.munch1 (\char -> isAlphaNum char || char == '_'))
+    quoted quote = lexeme $ P.between (P.char quote) (P.char quote) (P.many character)
+      where
+        character =
+          (P.char '\\' *> P.get)
+            P.<++ (P.string [quote, quote] *> pure quote)
+            P.<++ P.satisfy (/= quote)
+    fieldName = quoted '`' P.<++ quoted '"' P.<++ identifier
+    typeName = do
+      name <- identifier
+      children <- P.option [] (P.between (symbol '(') (symbol ')') (P.sepBy argument (symbol ',')))
+      pure (map toUpper name == "JSON" || or children)
+    argument =
+      ( do
+          _ <- fieldName
+          _ <- symbol '='
+          _ <- number
+          pure False
+      )
+        P.<++ ( do
+                  _ <- fieldName
+                  typeName
+              )
+        P.<++ ( do
+                  _ <- quoted '\''
+                  _ <- P.option "" (symbol '=' *> number)
+                  pure False
+              )
+        P.<++ (number *> pure False)
+        P.<++ typeName
+    number = lexeme $ do
+      sign <- P.option "" ((: []) <$> P.satisfy (`elem` ("+-" :: String)))
+      digits <- P.munch1 isDigit
+      pure (sign <> digits)
 
 -- | Wire width in bytes of a @Decimal(p, s)@ value.
 decimalWidthBytes :: Int -> Int
@@ -159,6 +215,9 @@ applyArgs name args = case name of
     [p, s] -> ChDecimal <$> asNum p <*> asNum s
     _ -> Left "Decimal expects (precision, scale)"
   "DateTime64" -> ChDateTime64 <$> firstNum
+  "DateTime" -> case args of
+    [AStr _] -> pure ChDateTime
+    _ -> Left "DateTime expects a timezone string"
   "Enum8" -> pure (ChEnum 8)
   "Enum16" -> pure (ChEnum 16)
   _ -> Left ("unsupported parametrised ClickHouse type: " <> show name)

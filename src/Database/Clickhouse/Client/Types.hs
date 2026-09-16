@@ -21,6 +21,8 @@ module Database.Clickhouse.Client.Types
   , externalSelectRequest
   , insertRequest
   , commandRequest
+  , effectiveRequestParams
+  , settingEnabled
   , ExternalTable (..)
   , externalTable
   , scalarExternal
@@ -30,6 +32,7 @@ module Database.Clickhouse.Client.Types
   , ClickhouseTransportException (..)
   , ClickhouseServerException (..)
   , ClickhouseDecodeException (..)
+  , ClickhouseSettingsException (..)
   ) where
 
 import Control.Exception (Exception)
@@ -37,8 +40,13 @@ import Control.Monad.Trans.Resource (MonadResource)
 import Data.Aeson (Value)
 import Data.Conduit (ConduitT)
 import Data.ByteString (ByteString)
+import Data.ByteString.Char8 qualified as BSC
+import Data.Char (toLower)
 import Data.Int (Int16, Int32, Int64, Int8)
+import Data.List (isPrefixOf, nubBy)
 import Data.Text (Text)
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
 import Data.Time (Day, UTCTime)
 import Data.UUID (UUID)
 import Data.Vector (Vector)
@@ -53,6 +61,7 @@ data ClickhouseConnectionSettings client = ClickhouseConnectionSettings
   { username :: !Text
   , password :: !Text
   , database :: !Text
+  , settings :: ![(String, ClickhouseType)]
   , connectionSettings :: !(ClickhouseClientSettings client)
   }
 
@@ -64,6 +73,7 @@ defaultConnection transportSettings =
     { username = "default"
     , password = ""
     , database = "default"
+    , settings = []
     , connectionSettings = transportSettings
     }
 
@@ -142,7 +152,7 @@ selectRequest sql =
   CHRequest
     { requestSql = sql
     , requestData = Nothing
-    , requestParams = jsonAsStringSettings
+    , requestParams = []
     , requestResponseFormat = Just defaultResponseFormat
     , requestExternals = []
     }
@@ -153,7 +163,7 @@ externalSelectRequest externals sql =
   CHRequest
     { requestSql = sql
     , requestData = Nothing
-    , requestParams = jsonAsStringSettings
+    , requestParams = []
     , requestResponseFormat = Just defaultResponseFormat
     , requestExternals = externals
     }
@@ -165,7 +175,7 @@ insertRequest statement payload =
   CHRequest
     { requestSql = statement
     , requestData = Just payload
-    , requestParams = jsonAsStringSettings
+    , requestParams = []
     , requestResponseFormat = Nothing
     , requestExternals = []
     }
@@ -181,13 +191,46 @@ commandRequest sql =
     , requestExternals = []
     }
 
--- | JSON columns are only serialisable as RowBinary Strings when the server
--- knows about these two settings (they are no-ops for other columns).
-jsonAsStringSettings :: [(ByteString, ByteString)]
-jsonAsStringSettings =
-  [ ("output_format_binary_write_json_as_string", "1")
-  , ("input_format_binary_read_json_as_string", "1")
-  ]
+effectiveRequestParams :: [(String, ClickhouseType)] -> CHRequest -> Either ClickhouseSettingsException [(ByteString, ByteString)]
+effectiveRequestParams values request = do
+  rendered <- mapM renderSetting values
+  pure (nubBy (\left right -> fst left == fst right) (requestParams request <> rendered))
+
+renderSetting :: (String, ClickhouseType) -> Either ClickhouseSettingsException (ByteString, ByteString)
+renderSetting (name, value)
+  | name `elem` ["query", "database", "user", "password", "default_format", "format"] || "param_" `isPrefixOf` name =
+      Left (ClickhouseSettingsException ("Use connection fields or requestParams, not settings, for " <> name))
+  | otherwise = (Text.encodeUtf8 (Text.pack name),) <$> render value
+ where
+  invalid = Left (ClickhouseSettingsException ("Setting " <> name <> " requires Bool, String, integer or finite Float"))
+  number :: (Integral scalar) => scalar -> Either ClickhouseSettingsException ByteString
+  number = Right . BSC.pack . show . toInteger
+  floating :: (RealFloat scalar, Show scalar) => scalar -> Either ClickhouseSettingsException ByteString
+  floating scalar
+    | isNaN scalar || isInfinite scalar = invalid
+    | otherwise = Right (BSC.pack (show scalar))
+  render scalar = case scalar of
+    ClickBool enabled -> Right (if enabled then "1" else "0")
+    ClickString bytes -> Right bytes
+    ClickInt8 integer -> number integer
+    ClickInt16 integer -> number integer
+    ClickInt32 integer -> number integer
+    ClickInt64 integer -> number integer
+    ClickInt128 integer -> number integer
+    ClickInt256 integer -> number integer
+    ClickUInt8 integer -> number integer
+    ClickUInt16 integer -> number integer
+    ClickUInt32 integer -> number integer
+    ClickUInt64 integer -> number integer
+    ClickUInt128 integer -> number integer
+    ClickUInt256 integer -> number integer
+    ClickFloat32 scalarFloat -> floating scalarFloat
+    ClickFloat64 scalarFloat -> floating scalarFloat
+    _ -> invalid
+
+settingEnabled :: ByteString -> [(ByteString, ByteString)] -> Bool
+settingEnabled name values =
+  maybe False (\value -> BSC.map toLower value `elem` ["1", "true"]) (lookup name values)
 
 -- | A dynamically typed ClickHouse value.
 --
@@ -229,9 +272,7 @@ data ClickhouseType
   | ClickDecimal64 !Integer
   | ClickDecimal128 !Integer
   | ClickDecimal256 !Integer
-  | -- | @JSON@ column; travels as RowBinary String when the server runs with
-    -- @*_binary_*_json_as_string@ settings (the driver sets them on SELECT
-    -- and INSERT requests).
+  | -- | @JSON@ column; requires explicit @*_binary_*_json_as_string@ settings.
     ClickJSON !Value
   | ClickNullable !(Maybe ClickhouseType)
   | ClickArray !(Vector ClickhouseType)
@@ -264,3 +305,8 @@ newtype ClickhouseDecodeException = ClickhouseDecodeException
   deriving stock (Show)
 
 instance Exception ClickhouseDecodeException
+
+newtype ClickhouseSettingsException = ClickhouseSettingsException String
+  deriving stock (Show, Eq)
+
+instance Exception ClickhouseSettingsException

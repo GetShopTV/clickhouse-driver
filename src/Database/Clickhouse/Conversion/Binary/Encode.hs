@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {- |
 RowBinary serialisation of 'ClickhouseType' values.
@@ -17,8 +18,12 @@ module Database.Clickhouse.Conversion.Binary.Encode
   , encodeRow
   , encodeRows
   , encodeLEB128
+  , encodeValueWithSettings
+  , encodeRowWithSettings
+  , encodeRowsWithSettings
   ) where
 
+import Control.Exception (throw)
 import Data.Bits (shiftR, (.&.), (.|.))
 import Data.Aeson qualified as Aeson
 import Data.ByteString (ByteString)
@@ -47,11 +52,14 @@ import Data.UUID (toWords64)
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
 import Data.Word (Word64)
-import Database.Clickhouse.Client.Types (ClickhouseType (..))
+import Database.Clickhouse.Client.Types (ClickhouseType (..), ClickhouseSettingsException (..), settingEnabled)
 
 -- | Encode one value.
 encodeValue :: ClickhouseType -> Builder
-encodeValue = \case
+encodeValue = encodeValueWithSettings []
+
+encodeValueWithSettings :: [(ByteString, ByteString)] -> ClickhouseType -> Builder
+encodeValueWithSettings params = \case
   ClickString bs -> encodeLEB128 (fromIntegral (BS.length bs)) <> byteString bs
   ClickFixedString bs -> byteString bs
   ClickBool True -> word8 1
@@ -86,28 +94,36 @@ encodeValue = \case
   ClickIPv6 bytes
     | BS.length bytes /= 16 -> error "ClickIPv6: expected 16 bytes"
     | otherwise -> byteString bytes
-  ClickJSON value ->
-    let bytes = BSL.toStrict (Aeson.encode value)
-     in encodeLEB128 (fromIntegral (BS.length bytes)) <> byteString bytes
+  ClickJSON value
+    | settingEnabled "input_format_binary_read_json_as_string" params ->
+        let bytes = BSL.toStrict (Aeson.encode value)
+         in encodeLEB128 (fromIntegral (BS.length bytes)) <> byteString bytes
+    | otherwise -> throw (ClickhouseSettingsException "JSON RowBinary encoding requires input_format_binary_read_json_as_string=1; enable it explicitly in settings")
   ClickNullable Nothing -> word8 1
-  ClickNullable (Just value) -> word8 0 <> encodeValue value
+  ClickNullable (Just value) -> word8 0 <> encodeValueWithSettings params value
   ClickArray values ->
     encodeLEB128 (fromIntegral (Vector.length values))
-      <> foldMap encodeValue values
-  ClickTuple values -> foldMap encodeValue values
+      <> foldMap (encodeValueWithSettings params) values
+  ClickTuple values -> foldMap (encodeValueWithSettings params) values
   ClickMap entries ->
     encodeLEB128 (fromIntegral (Vector.length entries))
-      <> foldMap (\(k, v) -> encodeValue k <> encodeValue v) entries
+      <> foldMap (\(k, v) -> encodeValueWithSettings params k <> encodeValueWithSettings params v) entries
 
 -- | Encode a single row (the concatenation of its columns).
 encodeRow :: Vector ClickhouseType -> Builder
-encodeRow = foldMap encodeValue
+encodeRow = encodeRowWithSettings []
+
+encodeRowWithSettings :: [(ByteString, ByteString)] -> Vector ClickhouseType -> Builder
+encodeRowWithSettings params = foldMap (encodeValueWithSettings params)
 
 -- | Encode many rows into one strict payload, suitable as the body of an
 -- @INSERT ... FORMAT RowBinary@ request.
 encodeRows :: [Vector ClickhouseType] -> ByteString
-encodeRows rows =
-  BSL.toStrict (toLazyByteString (foldMap encodeRow rows))
+encodeRows = encodeRowsWithSettings []
+
+encodeRowsWithSettings :: [(ByteString, ByteString)] -> [Vector ClickhouseType] -> ByteString
+encodeRowsWithSettings params rows =
+  BSL.toStrict (toLazyByteString (foldMap (encodeRowWithSettings params) rows))
 
 -- | Encode an integer as two's complement, little-endian, over the given
 -- number of bytes. Negative values are wrapped to their fixed-width

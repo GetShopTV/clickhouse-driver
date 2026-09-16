@@ -17,9 +17,8 @@ multi interface) and the wire format is binary:
   result — `runQuery`/`runQueryWithExternals` collect by design; stopping a
   stream early releases the transfer and the agent stays usable for later
   queries;
-* `JSON` columns travel as RowBinary Strings (the driver sets
-  `output_format_binary_write_json_as_string` /
-  `input_format_binary_read_json_as_string`) and decode into `Aeson.Value`.
+* `JSON` columns decode into `Aeson.Value` only with explicitly enabled
+  RowBinary string settings (see below). Ordinary requests send no settings.
 
 ## Usage
 
@@ -47,6 +46,42 @@ ready-to-use settings; override the default credentials with record update:
 ```haskell
 let conn' = conn { username = "report", password = "secret", database = "analytics" }
 ```
+
+Server settings use the existing value type: `settings :: [(String, ClickhouseType)]`,
+defaulting to `[]`. For example:
+
+```haskell
+let jsonConn = conn { settings = [("output_format_binary_write_json_as_string", ClickBool True)] }
+rows <- runQuery jsonConn "SELECT CAST('{\"n\":1}' AS JSON)"
+```
+
+Supported setting values are `ClickBool` (rendered as `0`/`1`), `ClickString`
+(raw bytes, not SQL-quoted), all signed/unsigned integer constructors (exact
+decimal), and finite `ClickFloat32`/`ClickFloat64`. Nonfinite floats and other
+constructors fail with `ClickhouseSettingsException` before HTTP. HTTP query
+encoding escapes names and values normally. Use connection fields for credentials
+and database, and `requestParams` for SQL `param_*` bindings, not `settings`.
+
+Request `requestParams` override connection settings; the first occurrence of a
+key wins within either list. Only one value per key is sent. `sourceRequest`
+streams and decodes a custom request with those same effective parameters;
+`sourceQuery` and the other query helpers use it automatically.
+
+JSON output requires `output_format_binary_write_json_as_string=1`. Without it,
+decoding fails with `ClickhouseDecodeException` as soon as the schema contains
+JSON, including nested or zero-row results. No schema query or retry is made.
+JSON input separately requires `input_format_binary_read_json_as_string=1` for
+`runInsert` and external tables. Neither setting implies the other. Enable only
+the settings your server/user permits; the driver never changes readonly policy.
+Boolean modes recognize `1` and case-insensitive `true`; `0`/`false` disable them.
+SQL-embedded `SETTINGS` or server-profile defaults are not inferred: configure
+the matching setting explicitly so the codec knows the wire representation.
+
+Direct codec calls default to no settings too. Their `*WithSettings` variants
+accept the effective HTTP parameter list returned by `effectiveRequestParams`.
+Raw `insertRequest` payloads have no schema and remain the caller's responsibility;
+when encoding JSON manually, use `encodeRowsWithSettings` with the same effective
+parameters that will be sent.
 
 Streaming query: `sourceQuery` returns a `ConduitT` that yields one decoded
 row at a time, as soon as the server sends it. Plain helpers `runQuery`,
@@ -113,6 +148,11 @@ rows <-
 Tables are attached as `multipart/form-data` parts (data in `RowBinary`,
 plus `<name>_format` and `<name>_structure` metadata). Use
 `sourceQueryWithExternals` to stream the rows instead of collecting them.
+
+External type declarations are inspected structurally for JSON before sending,
+independently of the supported response-decoder types. Timezones, decimal aliases,
+named tuple fields and enum labels remain server-validated; JSON nested in type
+arguments still requires the explicit input setting, even for empty tables.
 
 ## hcurl agent
 

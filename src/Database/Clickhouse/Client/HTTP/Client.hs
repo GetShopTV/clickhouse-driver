@@ -36,7 +36,8 @@ module Database.Clickhouse.Client.HTTP.Client
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, tryTakeMVar)
-import Control.Exception (throwIO)
+import Control.Exception (evaluate, throwIO)
+import Control.Monad (unless)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Resource (MonadResource)
@@ -50,7 +51,8 @@ import Data.Text.Encoding qualified as TE
 import Data.Vector qualified as Vector
 import Database.Clickhouse.Client.HTTP.Types (ClickhouseHTTPSettings (..))
 import Database.Clickhouse.Client.Types
-import Database.Clickhouse.Conversion.Binary.Encode (encodeRows)
+import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
+import Database.Clickhouse.Conversion.Types (externalTypeContainsJSON)
 import GHC.Clock (getMonotonicTimeNSec)
 import HCurl.Agent (Agent)
 import HCurl.Agent qualified as CurlAgent
@@ -171,7 +173,22 @@ buildHCurlRequest ::
   ClickhouseConnectionSettings ClientHTTP ->
   CHRequest ->
   IO Curl.Request
-buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
+buildHCurlRequest conn request = do
+  params <- either throwIO pure (effectiveRequestParams (settings conn) request)
+  unless (settingEnabled "input_format_binary_read_json_as_string" params) $
+    mapM_ validateExternal (requestExternals request)
+  mapM_ (evaluate . BS.length) (requestData request)
+  buildRequest conn (request {requestParams = params})
+  where
+    validateExternal table = mapM_ validateColumn (externalColumns table)
+    validateColumn (_, typeName) = do
+      hasJSON <- either (throwIO . ClickhouseSettingsException) pure (externalTypeContainsJSON typeName)
+      if hasJSON
+        then throwIO (ClickhouseSettingsException "JSON external tables require input_format_binary_read_json_as_string=1; enable it explicitly in settings")
+        else pure ()
+
+buildRequest :: ClickhouseConnectionSettings ClientHTTP -> CHRequest -> IO Curl.Request
+buildRequest ClickhouseConnectionSettings {..} CHRequest {..} =
   case requestExternals of
     [] -> pure (makeRequest requestBody authAndFormatHeaders)
     _ -> case requestData of
@@ -182,9 +199,11 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
         let multipartHeaders =
               authAndFormatHeaders
                 <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
+            payload = multipartBody boundary multipartFields
+        _ <- evaluate (BS.length payload)
         pure $
           makeRequest
-            (CurlTypes.Buffer (multipartBody boundary multipartFields))
+            (CurlTypes.Buffer payload)
             multipartHeaders
   where
     httpOptions = transportOptions connectionSettings
@@ -235,7 +254,7 @@ buildHCurlRequest ClickhouseConnectionSettings {..} CHRequest {..} =
           externalTableName
           (Just externalTableName)
           (Just "application/octet-stream")
-          (encodeRows (map Vector.fromList externalRows))
+          (encodeRowsWithSettings requestParams (map Vector.fromList externalRows))
       ]
 
 data MultipartField = MultipartField

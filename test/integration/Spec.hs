@@ -21,6 +21,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BSC
 import Data.Char (toLower)
+import Data.List (isInfixOf)
 import Data.Conduit (ConduitT, await, runConduit, (.|))
 import Data.Conduit.Combinators (sinkList, sinkNull)
 import Data.Conduit.Combinators qualified as ConduitC
@@ -50,7 +51,7 @@ import Network.Socket
   , tupleToHostAddress
   )
 import Network.Socket.ByteString qualified as SocketBS
-import System.Environment (lookupEnv)
+import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
@@ -113,7 +114,10 @@ main = do
         putStrLn
           "integration: DDL/DML checks are skipped unless CH_INTEGRATION_ALLOW_WRITES=1 \
           \and the target database is disposable"
-      results <- runAll (checks conn allowWrites)
+      args <- getArgs
+      readonlyUser <- lookupEnv "CH_READONLY_USER"
+      let selected = if args == ["--settings-only"] then [] else checks conn allowWrites
+      results <- runAll (settingsChecks conn readonlyUser <> selected)
       let failures = [name | (name, Left _) <- results]
       forM_ results $ \case
         (name, Left err) -> hPutStrLn stderr ("FAIL " <> name <> ": " <> err)
@@ -160,6 +164,103 @@ readOnlyChecks conn =
   , checkIO "external tables (RowBinary multipart) round trip" $
       checkExternalTables conn
   ]
+
+settingsChecks :: ClickhouseConnectionSettings ClientHTTP -> Maybe String -> [Check]
+settingsChecks conn readonlyUser =
+  [ checkIO "ordinary SELECT and zero-row result use no codec settings" $ do
+      rows <- runQuery conn "SELECT toUInt64(42)"
+      assertEqIO "ordinary row" (rowsVector [[ClickUInt64 42]]) rows
+      empty <- runQuery conn "SELECT toUInt64(42) WHERE 0"
+      assertEqIO "empty result" Vector.empty empty
+  , checkIO "DateTime timezone external schema works without JSON settings" $ do
+      let external = externalTable "timezone_input" [("v", "DateTime('UTC')")] [[ClickDateTime (read "2020-09-13 12:26:40 UTC")]]
+      rows <- runQueryWithExternals conn [external] "SELECT toString(v) FROM timezone_input"
+      assertEqIO "timezone value" (rowsVector [[ClickString "2020-09-13 12:26:40"]]) rows
+  , checkIO "non-JSON external type forms do not require decoder support" $ do
+      forM_
+        [ ("Decimal32(2)", ClickDecimal32 123, "1.23")
+        , ("Tuple(JSON UInt64, label String)", ClickTuple (Vector.fromList [ClickUInt64 7, ClickString "x"]), "(7,'x')")
+        , ("SimpleAggregateFunction(sum, UInt64)", ClickUInt64 7, "7")
+        , ("Enum8('JSON' = -1, 'other' = 1)", ClickInt8 (-1), "JSON")
+        ]
+        $ \(typeName, value, expected) -> do
+          let external = externalTable "typed_input" [("v", typeName)] [[value]]
+          rows <- runQueryWithExternals conn [external] "SELECT toString(v) FROM typed_input"
+          assertEqIO (BSC.unpack typeName) (rowsVector [[ClickString expected]]) rows
+  , checkIO "typed settings, URL strings, placeholders and overrides reach ClickHouse" $ do
+      let configured = conn{settings = [("max_threads", ClickUInt64 3), ("log_comment", ClickString "a &+%?#='\\"), ("max_execution_time", ClickFloat64 1.25)]}
+          request =
+            (selectRequest "SELECT toUInt64(getSetting('max_threads')), getSetting('log_comment'), getSetting('max_execution_time'), {value:String}")
+              { requestParams = [("max_threads", "2"), ("param_value", "x &+%?#='\\\\")]
+              }
+      rows <- runResourceT (runConduit (sourceRequest configured request .| sinkList))
+      assertEqIO "effective values" [Vector.fromList [ClickUInt64 2, ClickString "a &+%?#='\\", ClickFloat64 1.25, ClickString "x &+%?#='\\"]] rows
+  , checkIO "invalid typed settings fail before connecting" $ do
+      let transport = connectionSettings conn
+          unreachable = conn{connectionSettings = transport{transportOptions = (transportOptions transport){clickhouseUrl = "http://127.0.0.1", port = 1}}, settings = [("max_threads", ClickArray Vector.empty)]}
+      outcome <- try (runQuery unreachable "SELECT 1")
+      case outcome of
+        Left (ClickhouseSettingsException message) | "max_threads" `isInfixOf` message -> pure ()
+        _ -> fail "invalid setting did not fail before HTTP"
+  , checkIO "JSON output requires an explicit effective output flag" $ do
+      let sql = "SELECT '{\"n\":1}'::JSON"
+          enabled = conn{settings = [("output_format_binary_write_json_as_string", ClickBool True)]}
+      rows <- runQuery enabled sql
+      case map Vector.toList (Vector.toList rows) of
+        [[ClickJSON _]] -> pure ()
+        other -> fail ("unexpected JSON result: " <> show other)
+      empty <- runQuery enabled (sql <> " WHERE 0")
+      assertEqIO "empty JSON" Vector.empty empty
+      nested <- runQuery enabled "SELECT ([ '{\"n\":1}'::JSON ], map('key', '{\"n\":1}'::JSON))"
+      case map Vector.toList (Vector.toList nested) of
+        [[ClickTuple fields]] | Vector.length fields == 2 -> pure ()
+        other -> fail ("unexpected nested JSON result: " <> show other)
+      forM_ [conn, conn{settings = [("output_format_binary_write_json_as_string", ClickBool False)]}, conn{settings = [("input_format_binary_read_json_as_string", ClickBool True)]}] $ \disabled ->
+        forM_ [sql, sql <> " WHERE 0", "SELECT ['{}'::JSON]"] $ \query -> expectJSONError (runQuery disabled query)
+      let overridden = (selectRequest sql){requestParams = [("output_format_binary_write_json_as_string", "0")]}
+      expectJSONError (runResourceT (runConduit (sourceRequest enabled overridden .| sinkList)))
+  , checkIO "external JSON input and output flags are independent" $ do
+      let output = conn{settings = [("output_format_binary_write_json_as_string", ClickBool True)]}
+          input = conn{settings = [("input_format_binary_read_json_as_string", ClickBool True)]}
+          both = conn{settings = settings input <> settings output}
+      jsonRows <- runQuery output "SELECT '{\"n\":1}'::JSON"
+      let external = externalTable "json_input" [("value", "JSON")] (map Vector.toList (Vector.toList jsonRows))
+      rejected <- try (runQueryWithExternals output [external] "SELECT value FROM json_input")
+      case rejected of
+        Left (ClickhouseSettingsException message) | "input_format_binary_read_json_as_string=1" `isInfixOf` message -> pure ()
+        _ -> fail "external JSON accepted without input setting"
+      stringRows <- runQueryWithExternals input [external] "SELECT toString(value) FROM json_input"
+      assertEqIO "input JSON value" (rowsVector [[ClickString "{\"n\":1}"]]) stringRows
+      echoed <- runQueryWithExternals both [external] "SELECT value FROM json_input"
+      assertEqIO "JSON roundtrip" jsonRows echoed
+      rejectedInsert <- try (runInsert output "not_contacted" ["value"] (map Vector.toList (Vector.toList jsonRows)))
+      case rejectedInsert of
+        Left (ClickhouseSettingsException message) | "input_format_binary_read_json_as_string=1" `isInfixOf` message -> pure ()
+        _ -> fail "JSON INSERT accepted without input setting"
+  , checkIO "empty external schemas retain nested JSON protection before HTTP" $ do
+      let transport = connectionSettings conn
+          unreachable = conn{connectionSettings = transport{transportOptions = (transportOptions transport){clickhouseUrl = "http://127.0.0.1", port = 1}}}
+      forM_ ["Array(Tuple(value JSON))", "Tuple(JSON UInt64, value Array(JSON))", "Map(String, JSON)", "FutureWrapper(Tuple(`value` JSON))", "Array(Tuple(value jSoN))"] $ \typeName -> do
+        let external = externalTable "empty_input" [("v", typeName)] []
+        rejected <- try (runQueryWithExternals unreachable [external] "SELECT toString(v) FROM empty_input")
+        case rejected of
+          Left (ClickhouseSettingsException message) | "input_format_binary_read_json_as_string=1" `isInfixOf` message -> pure ()
+          _ -> fail ("nested JSON schema bypassed the input guard: " <> BSC.unpack typeName)
+  ]
+    <> [ checkIO "readonly=1 user performs SELECT without modifying server settings" $ do
+           let readonly = conn{username = Text.pack user, settings = []}
+           rows <- runQuery readonly "SELECT toUInt64(getSetting('readonly')), toUInt64(42)"
+           assertEqIO "readonly query" (rowsVector [[ClickUInt64 1, ClickUInt64 42]]) rows
+           empty <- runQuery readonly "SELECT toUInt64(42) WHERE 0"
+           assertEqIO "readonly empty query" Vector.empty empty
+       | Just user <- [readonlyUser]
+       ]
+  where
+    expectJSONError action = do
+      outcome <- try action
+      case outcome of
+        Left (ClickhouseDecodeException message) | "output_format_binary_write_json_as_string=1" `isInfixOf` message -> pure ()
+        _ -> fail "missing actionable JSON output-setting error"
 
 writeChecks :: ClickhouseConnectionSettings ClientHTTP -> [Check]
 writeChecks conn =

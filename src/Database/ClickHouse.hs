@@ -34,6 +34,7 @@ module Database.ClickHouse
   , connectHTTP
     -- * Queries
   , sourceQuery
+  , sourceRequest
   , sourceQueryWithExternals
   , runQuery
   , runQueryWithExternals
@@ -41,6 +42,8 @@ module Database.ClickHouse
   , runCommand
   ) where
 
+import Control.Exception (throwIO)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Resource (MonadResource, runResourceT)
 import Data.ByteString (ByteString)
 import Data.Conduit (ConduitT, runConduit, (.|))
@@ -57,8 +60,8 @@ import Database.Clickhouse.Client.HTTP.Client
   )
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
-import Database.Clickhouse.Conversion.Binary.Decode (decodeRowBinaryC)
-import Database.Clickhouse.Conversion.Binary.Encode (encodeRows)
+import Database.Clickhouse.Conversion.Binary.Decode (decodeRowBinaryCWithSettings)
+import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
 import Database.Clickhouse.Conversion.ToClickhouse
 import Database.Clickhouse.Conversion.Types (renderInsertStatement)
 import UnliftIO (MonadUnliftIO)
@@ -86,8 +89,16 @@ sourceQuery ::
   ClickhouseConnectionSettings client ->
   ByteString ->
   ConduitT () (Vector ClickhouseType) m ()
-sourceQuery settings sql =
-  sendSource settings (selectRequest sql) .| decodeRowBinaryC
+sourceQuery conn sql = sourceRequest conn (selectRequest sql)
+
+sourceRequest ::
+  (ClickhouseClient client, MonadResource m, MonadUnliftIO m) =>
+  ClickhouseConnectionSettings client ->
+  CHRequest ->
+  ConduitT () (Vector ClickhouseType) m ()
+sourceRequest conn request = do
+  params <- either (liftIO . throwIO) pure (effectiveRequestParams (settings conn) request)
+  sendSource conn request .| decodeRowBinaryCWithSettings params
 
 -- | Stream the rows of a SELECT that references temporary external tables
 -- (multipart/form-data, RowBinary payloads).
@@ -97,8 +108,8 @@ sourceQueryWithExternals ::
   [ExternalTable] ->
   ByteString ->
   ConduitT () (Vector ClickhouseType) m ()
-sourceQueryWithExternals settings externals sql =
-  sendSource settings (externalSelectRequest externals sql) .| decodeRowBinaryC
+sourceQueryWithExternals conn externals sql =
+  sourceRequest conn (externalSelectRequest externals sql)
 
 -- | Run a query and collect every row.
 runQuery ::
@@ -130,11 +141,12 @@ runInsert ::
   [Text] ->
   [[ClickhouseType]] ->
   IO ()
-runInsert settings table columns rows = do
+runInsert conn table columns rows = do
   let statement = Text.encodeUtf8 (renderInsertStatement table columns)
-      payload = encodeRows (map Vector.fromList rows)
+  params <- either throwIO pure (effectiveRequestParams (settings conn) (insertRequest statement mempty))
+  let payload = encodeRowsWithSettings params (map Vector.fromList rows)
   runResourceT $
-    runConduit (sendSource settings (insertRequest statement payload) .| sinkNull)
+    runConduit (sendSource conn (insertRequest statement payload) .| sinkNull)
 
 -- | Run a statement and discard its output (DDL, INSERT without collecting
 -- the result, SET, ...).  Server side errors still throw.

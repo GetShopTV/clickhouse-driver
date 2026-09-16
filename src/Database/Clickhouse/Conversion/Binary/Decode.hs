@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {- |
 Streaming RowBinary decoding.
@@ -17,6 +18,9 @@ module Database.Clickhouse.Conversion.Binary.Decode
   ( decodeRowBinaryC
   , decodeRowsFromSchema
   , decodeRowBinaryBuffer
+  , decodeRowBinaryCWithSettings
+  , decodeRowBinaryBufferWithSettings
+  , decodeRowsFromSchemaWithSettings
   ) where
 
 import Control.Exception (throwIO)
@@ -49,11 +53,13 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import Database.Clickhouse.Client.Types
   ( ClickhouseDecodeException (..)
   , ClickhouseType (..)
+  , settingEnabled
   )
 import Database.Clickhouse.Conversion.Types
   ( ChType (..)
   , decimalWidthBytes
   , parseChType
+  , containsJSON
   )
 
 -- | Result of running a parser over the bytes available so far.
@@ -267,7 +273,10 @@ parseTypes = mapM parseChType
 -- An empty body (a result with no rows, or a statement with no output) is a
 -- valid stream that yields nothing.
 decodeRowBinaryC :: (MonadIO m) => ConduitT ByteString (Vector ClickhouseType) m ()
-decodeRowBinaryC = header mempty
+decodeRowBinaryC = decodeRowBinaryCWithSettings []
+
+decodeRowBinaryCWithSettings :: (MonadIO m) => [(ByteString, ByteString)] -> ConduitT ByteString (Vector ClickhouseType) m ()
+decodeRowBinaryCWithSettings params = header mempty
   where
     header !acc = do
       next <- await
@@ -281,6 +290,7 @@ decodeRowBinaryC = header mempty
           Just _ -> header buffer
         PDone (_, types) rest -> do
           schemas <- either throwDecode pure (parseTypes types)
+          either throwDecode pure (validateSchemas params schemas)
           rows schemas rest
 
     rows schemas !acc = do
@@ -308,16 +318,30 @@ throwDecode = liftIO . throwIO . ClickhouseDecodeException
 
 -- | Decode the rows of a complete @RowBinaryWithNamesAndTypes@ buffer.
 decodeRowBinaryBuffer :: ByteString -> Either String [Vector ClickhouseType]
-decodeRowBinaryBuffer buffer = case runP headerParser buffer of
+decodeRowBinaryBuffer = decodeRowBinaryBufferWithSettings []
+
+decodeRowBinaryBufferWithSettings :: [(ByteString, ByteString)] -> ByteString -> Either String [Vector ClickhouseType]
+decodeRowBinaryBufferWithSettings params buffer = case runP headerParser buffer of
   PFail err -> Left err
   PNeedMore -> Left "truncated header"
   PDone (_, types) rest -> do
     schemas <- parseTypes types
-    strictRows schemas rest
+    decodeRowsFromSchemaWithSettings params schemas rest
 
 -- | Decode rows from a complete buffer given the column types.
 decodeRowsFromSchema :: [ChType] -> ByteString -> Either String [Vector ClickhouseType]
-decodeRowsFromSchema schemas = strictRows schemas
+decodeRowsFromSchema = decodeRowsFromSchemaWithSettings []
+
+decodeRowsFromSchemaWithSettings :: [(ByteString, ByteString)] -> [ChType] -> ByteString -> Either String [Vector ClickhouseType]
+decodeRowsFromSchemaWithSettings params schemas buffer = do
+  validateSchemas params schemas
+  strictRows schemas buffer
+
+validateSchemas :: [(ByteString, ByteString)] -> [ChType] -> Either String ()
+validateSchemas params schemas
+  | any containsJSON schemas && not (settingEnabled "output_format_binary_write_json_as_string" params) =
+      Left "JSON RowBinary decoding requires output_format_binary_write_json_as_string=1; enable it explicitly in settings"
+  | otherwise = Right ()
 
 strictRows :: [ChType] -> ByteString -> Either String [Vector ClickhouseType]
 strictRows schemas = go
