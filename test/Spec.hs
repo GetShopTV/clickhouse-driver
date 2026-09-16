@@ -109,6 +109,37 @@ checks =
             then Right ()
             else Left ("unexpected error: " <> err)
         Right _ -> Left "expected Point to be rejected"
+  , checkIO "header-only streaming result decodes to zero rows" $ do
+      let headerBytes = makeBuffer ["n"] ["UInt64"] []
+      outcome <-
+        try
+          (runResourceT (runConduit (sourceList [headerBytes] .| decodeRowBinaryC .| sinkList)))
+          :: IO (Either ClickhouseDecodeException [Vector.Vector ClickhouseType])
+      pure $ case outcome of
+        Left err -> Left (show err)
+        Right decoded -> assertEq "decoded rows" [] decoded
+  , checkIO "header-only streaming result tolerates split and empty chunks" $ do
+      let headerBytes = makeBuffer ["n"] ["UInt64"] []
+          chunks = BS.empty : concatMap (\chunk -> [chunk, BS.empty]) (chunksOf 1 headerBytes)
+      outcome <-
+        try
+          (runResourceT (runConduit (sourceList chunks .| decodeRowBinaryC .| sinkList)))
+          :: IO (Either ClickhouseDecodeException [Vector.Vector ClickhouseType])
+      pure $ case outcome of
+        Left err -> Left (show err)
+        Right decoded -> assertEq "decoded rows" [] decoded
+  , checkIO "partial first row still fails after split and empty chunks" $ do
+      let buffer = makeBuffer ["n"] ["UInt64"] [[ClickUInt64 42]]
+          truncated = BS.init buffer
+          chunks = BS.empty : concatMap (\chunk -> [chunk, BS.empty]) (chunksOf 1 truncated)
+      outcome <-
+        try
+          (runResourceT (runConduit (sourceList chunks .| decodeRowBinaryC .| sinkList)))
+          :: IO (Either ClickhouseDecodeException [Vector.Vector ClickhouseType])
+      pure $ case outcome of
+        Left (ClickhouseDecodeException message) ->
+          assertEq "decode error" "unexpected end of input in the middle of a row" message
+        Right decoded -> Left ("expected a decode exception, got " <> show decoded)
   , checkIO "streaming decode across chunk boundaries matches buffer decode" $ do
       let buffer = makeBuffer columnNames typeNames rows
       streamed <- runResourceT (runConduit (sourceList (chunksOf 7 buffer) .| decodeRowBinaryC .| sinkList))

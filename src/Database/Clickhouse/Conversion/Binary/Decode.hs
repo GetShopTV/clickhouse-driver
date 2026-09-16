@@ -289,7 +289,9 @@ decodeRowBinaryC = header mempty
         PNeedMore -> do
           next <- await
           case next of
-            Nothing -> throwDecode "unexpected end of input in the middle of a row"
+            Nothing
+              | BS.null acc -> pure ()
+              | otherwise -> throwDecode "unexpected end of input in the middle of a row"
             Just chunk -> rows schemas (acc <> chunk)
         PDone row rest -> do
           yield row
