@@ -18,6 +18,7 @@ module Database.Clickhouse.Client.Types
     -- * Requests
   , CHRequest (..)
   , selectRequest
+  , selectRequestWithParams
   , externalSelectRequest
   , insertRequest
   , commandRequest
@@ -117,6 +118,11 @@ data CHRequest = CHRequest
     requestData :: !(Maybe ByteString)
   , -- | Extra URL query parameters (ClickHouse settings, @param_*@, ...).
     requestParams :: ![(ByteString, ByteString)]
+  , -- | Typed @{name:Type}@ query-parameter bindings.  The name is the
+    -- placeholder name without the @param_@ prefix.  Values are rendered as
+    -- escaped text by the transport; see
+    -- "Database.Clickhouse.Conversion.Text.Escaped".
+    requestQueryParams :: ![(ByteString, ClickhouseType)]
   , -- | @X-ClickHouse-Format@ header override.
     requestResponseFormat :: !(Maybe ByteString)
   , -- | Temporary external tables attached to the request as multipart
@@ -153,9 +159,20 @@ selectRequest sql =
     { requestSql = sql
     , requestData = Nothing
     , requestParams = []
+    , requestQueryParams = []
     , requestResponseFormat = Just defaultResponseFormat
     , requestExternals = []
     }
+
+-- | A SELECT with typed @{name:Type}@ query-parameter bindings.
+--
+-- The bindings are validated and rendered by
+-- 'Database.Clickhouse.Conversion.Text.Escaped.effectiveRequestQueryParams';
+-- an unrenderable value fails with 'ClickhouseSettingsException' before any
+-- request is sent.
+selectRequestWithParams :: [(ByteString, ClickhouseType)] -> ByteString -> CHRequest
+selectRequestWithParams queryParams sql =
+  (selectRequest sql) {requestQueryParams = queryParams}
 
 -- | A SELECT with temporary external tables attached (multipart/form-data).
 externalSelectRequest :: [ExternalTable] -> ByteString -> CHRequest
@@ -164,6 +181,7 @@ externalSelectRequest externals sql =
     { requestSql = sql
     , requestData = Nothing
     , requestParams = []
+    , requestQueryParams = []
     , requestResponseFormat = Just defaultResponseFormat
     , requestExternals = externals
     }
@@ -176,6 +194,7 @@ insertRequest statement payload =
     { requestSql = statement
     , requestData = Just payload
     , requestParams = []
+    , requestQueryParams = []
     , requestResponseFormat = Nothing
     , requestExternals = []
     }
@@ -187,6 +206,7 @@ commandRequest sql =
     { requestSql = sql
     , requestData = Nothing
     , requestParams = []
+    , requestQueryParams = []
     , requestResponseFormat = Nothing
     , requestExternals = []
     }

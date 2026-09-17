@@ -24,6 +24,7 @@ library
       Database.Clickhouse.Client.Types
       Database.Clickhouse.Conversion.Binary.Decode
       Database.Clickhouse.Conversion.Binary.Encode
+      Database.Clickhouse.Conversion.Text.Escaped
       Database.Clickhouse.Conversion.ToClickhouse
       Database.Clickhouse.Conversion.Types
   build-depends:
@@ -72,6 +73,7 @@ test-suite clickhouse-driver-test
     , bytestring
     , clickhouse-driver
     , conduit
+    , hcurl
     , resourcet
     , time
     , uuid
@@ -92,5 +94,7 @@ test-suite clickhouse-driver-integration
     , network
     , resourcet
     , text
+    , time
+    , uuid
     , vector
   default-language: GHC2021

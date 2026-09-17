@@ -20,20 +20,25 @@ import Control.Monad.Trans.Resource (runResourceT)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BSC
-import Data.Char (toLower)
+import Data.Char (toLower, toUpper)
 import Data.List (isInfixOf)
 import Data.Conduit (ConduitT, await, runConduit, (.|))
 import Data.Conduit.Combinators (sinkList, sinkNull)
 import Data.Conduit.Combinators qualified as ConduitC
+import Data.Ratio ((%))
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as Text
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.Unique (hashUnique, newUnique)
+import Data.UUID (fromWords64)
 import Data.Vector qualified as Vector
 import Data.Word (Word64)
 import Database.ClickHouse
+import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats (getRTSStats, getRTSStatsEnabled, max_live_bytes)
+import Numeric (showHex)
 import Network.Socket
   ( Family (AF_INET)
   , SockAddr (..)
@@ -163,6 +168,10 @@ readOnlyChecks conn =
       checkTruncatedBody conn
   , checkIO "external tables (RowBinary multipart) round trip" $
       checkExternalTables conn
+  , checkIO "typed query parameters bind scalars, escaped strings and arrays" $
+      checkTypedQueryParams conn
+  , checkIO "typed query parameters coexist with RowBinary external tables" $
+      checkTypedParamsWithExternals conn
   ]
 
 settingsChecks :: ClickhouseConnectionSettings ClientHTTP -> Maybe String -> [Check]
@@ -268,6 +277,8 @@ writeChecks conn =
       checkInsertRoundTrip conn
   , checkIO "large insert payload round trip (unique owned table)" $
       checkLargeInsert conn
+  , checkIO "insert with typed parameters falls back to URL parameters (unique owned table)" $
+      checkInsertWithParams conn
   ]
 
 foldNumberRows :: (Monad m) => ConduitT (Vector.Vector ClickhouseType) o m (Int, Integer)
@@ -577,6 +588,139 @@ checkExternalTables conn = do
       [single]
       "SELECT count() FROM numbers(100) WHERE number % 10 = (SELECT value FROM single)"
   assertEqIO "scalar external table" (rowsVector [[ClickUInt64 10]]) gotScalar
+
+-- | Typed @{name:Type}@ values must arrive through escaped text, so every
+-- case below is chosen such that a wrong escape changes the returned bytes.
+checkTypedQueryParams :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+checkTypedQueryParams conn = do
+  scalar <- runQueryWithParams conn [("p", ClickUInt64 41)] "SELECT {p:UInt64} + 1"
+  assertEqIO "scalar parameter" (rowsVector [[ClickUInt64 42]]) scalar
+  putStrLn ("  [evidence] SELECT {p:UInt64} + 1 with param_p=41 -> " <> show (firstRow scalar))
+  let tricky =
+        BS.pack
+          [ 0x61, 0x09, 0x62, 0x0A, 0x63, 0x0D, 0x64, 0x5C, 0x65, 0x00
+          , 0x66, 0x01, 0x67, 0x7F, 0x68
+          , 0xC3, 0xA9
+          , 0x27, 0xFF
+          ]
+  escaped <-
+    runQueryWithParams
+      conn
+      [("s", ClickString tricky)]
+      "SELECT hex({s:String}), length({s:String})"
+  assertEqIO
+    "escaped string round trip"
+    (rowsVector [[ClickString (BSC.map toUpper (hexOf tricky)), ClickUInt64 (fromIntegral (BS.length tricky))]])
+    escaped
+  putStrLn
+    ( "  [evidence] SELECT hex({s:String}), length({s:String}) for "
+        <> show (BS.length tricky)
+        <> " bytes (tab/LF/CR/backslash/NUL/0x01/0x7F/UTF-8/quote/0xFF) -> "
+        <> show (firstRow escaped)
+    )
+  arrays <-
+    runQueryWithParams
+      conn
+      [("ids", ClickArray (Vector.fromList [ClickUInt64 1, ClickUInt64 2, ClickUInt64 3]))]
+      "SELECT length({ids:Array(UInt64)}), arraySum({ids:Array(UInt64)})"
+  assertEqIO "array parameter" (rowsVector [[ClickUInt64 3, ClickUInt64 6]]) arrays
+  putStrLn
+    ( "  [evidence] SELECT length, arraySum over {ids:Array(UInt64)} = [1,2,3] -> "
+        <> show (firstRow arrays)
+    )
+  let names =
+        Vector.fromList
+          [ ClickString "it's"
+          , ClickString "a\\b"
+          , ClickString (BS.pack [0x61, 0x0A, 0x62])
+          ]
+  nested <- runQueryWithParams conn [("names", ClickArray names)] "SELECT {names:Array(String)}"
+  assertEqIO "quoted strings inside an array" (rowsVector [[ClickArray names]]) nested
+  putStrLn ("  [evidence] nested quoting of {names:Array(String)} -> " <> show (firstRow nested))
+  typed <-
+    runQueryWithParams
+      conn
+      [ ("b", ClickBool True)
+      , ("u", ClickUuid (fromWords64 0x550E8400E29B41D4 0xA716446655440000))
+      , ("t", ClickDateTime64 3 (posixSecondsToUTCTime (fromRational (1638543825123 % 1000))))
+      , ("n", ClickNullable Nothing)
+      , ("s", ClickNullable (Just (ClickString "x")))
+      ]
+      "SELECT toString({b:Bool}), toString({u:UUID}), toUnixTimestamp64Milli({t:DateTime64(3)}), \
+      \isNull({n:Nullable(UInt8)}), toString({s:Nullable(String)})"
+  assertEqIO
+    "Bool/UUID/DateTime64/Nullable parameters"
+    ( rowsVector
+        [ [ ClickString "true"
+          , ClickString "550e8400-e29b-41d4-a716-446655440000"
+          , ClickInt64 1638543825123
+          , ClickUInt8 1
+          , ClickNullable (Just (ClickString "x"))
+          ]
+        ]
+    )
+    typed
+  putStrLn ("  [evidence] Bool/UUID/DateTime64/Nullable bindings -> " <> show (firstRow typed))
+
+-- | The multipart body carries the @query@ field, the typed
+-- @param_<name>@ fields and the RowBinary external parts at the same time.
+checkTypedParamsWithExternals :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+checkTypedParamsWithExternals conn = do
+  let ids =
+        externalTable
+          "ids"
+          [("value", "UInt64")]
+          [[ClickUInt64 1], [ClickUInt64 2], [ClickUInt64 3]]
+      request =
+        (externalSelectRequest [ids] "SELECT {base:UInt64} + sum(value) AS total, count() AS cnt FROM ids")
+          { requestQueryParams = [("base", ClickUInt64 40)]
+          }
+  rows <- runResourceT (runConduit (sourceRequest conn request .| sinkList))
+  assertEqIO
+    "typed parameter plus external table"
+    (rowsVector [[ClickUInt64 46, ClickUInt64 3]])
+    (Vector.fromList rows)
+  putStrLn
+    ( "  [evidence] multipart query + param_base=40 + RowBinary external part -> "
+        <> show (firstRow (Vector.fromList rows))
+    )
+
+-- | An INSERT payload cannot live in a multipart body, so typed parameters
+-- fall back to URL parameters there.  The inserted values depend on both the
+-- external payload (RowBinary) and the URL parameter.
+checkInsertWithParams :: ClickhouseConnectionSettings ClientHTTP -> IO ()
+checkInsertWithParams conn = do
+  tableName <- uniqueTableName "it_params"
+  let table = Text.encodeUtf8 tableName
+      createStatement = "CREATE TABLE " <> table <> " (n UInt64, tag String) ENGINE = Memory"
+  withOwnedTable conn tableName createStatement $ do
+    let payload = encodeRowsWithSettings [] (map (Vector.singleton . ClickString) ["x", "yy"])
+        statement =
+          "INSERT INTO " <> table
+            <> " (n, tag) SELECT {add:UInt64} + toUInt64(length(tag) - 1) AS n, tag"
+            <> " FROM input('tag String') FORMAT RowBinary"
+        request = (insertRequest statement payload) {requestQueryParams = [("add", ClickUInt64 40)]}
+    runResourceT (runConduit (sendSource conn request .| sinkNull))
+    rows <- runQuery conn ("SELECT n, tag FROM " <> table <> " ORDER BY tag")
+    assertEqIO
+      "insert with typed parameters"
+      (rowsVector [[ClickUInt64 40, ClickString "x"], [ClickUInt64 41, ClickString "yy"]])
+      rows
+    putStrLn
+      ( "  [evidence] INSERT ... input('tag String') FORMAT RowBinary with param_add=40 in the URL -> "
+          <> show rows
+      )
+
+firstRow :: Vector.Vector (Vector.Vector ClickhouseType) -> [ClickhouseType]
+firstRow rows = maybe [] Vector.toList (rows Vector.!? 0)
+
+hexOf :: ByteString -> ByteString
+hexOf = BSC.concat . map hexByte . BS.unpack
+ where
+  hexByte byte = BSC.pack (padLeft 2 (showHex byte ""))
+  padLeft width text
+    | length text >= width = text
+    | otherwise = replicate (width - length text) '0' <> text
 
 rowsVector :: [[ClickhouseType]] -> Vector.Vector (Vector.Vector ClickhouseType)
 rowsVector = Vector.fromList . map Vector.fromList

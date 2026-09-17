@@ -33,6 +33,7 @@ module Database.Clickhouse.Client.HTTP.Client
   , ClickhouseHTTPTransport (..)
   , newManagedAgent
   , newHTTPTransport
+  , buildRequest
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, tryTakeMVar)
@@ -52,6 +53,7 @@ import Data.Vector qualified as Vector
 import Database.Clickhouse.Client.HTTP.Types (ClickhouseHTTPSettings (..))
 import Database.Clickhouse.Client.Types
 import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
+import Database.Clickhouse.Conversion.Text.Escaped (effectiveRequestQueryParams)
 import Database.Clickhouse.Conversion.Types (externalTypeContainsJSON)
 import GHC.Clock (getMonotonicTimeNSec)
 import HCurl.Agent (Agent)
@@ -187,37 +189,53 @@ buildHCurlRequest conn request = do
         then throwIO (ClickhouseSettingsException "JSON external tables require input_format_binary_read_json_as_string=1; enable it explicitly in settings")
         else pure ()
 
+-- | Assemble the HTTP request for a 'CHRequest'.
+--
+-- A multipart body is used when the request has external tables or typed query
+-- parameters.  Its field order is pinned: @query@ first, then one plain text
+-- @param_<name>@ field per typed parameter, then the external-table parts.
+-- An INSERT payload cannot travel in a multipart body, so typed parameters of
+-- an INSERT request fall back to @param_<name>@ URL parameters (the SQL is
+-- already sent as the URL @query@ parameter there).
+--
+-- Exported for tests, which pin the wire shape without a live server; the
+-- transport itself is the only production caller.
 buildRequest :: ClickhouseConnectionSettings ClientHTTP -> CHRequest -> IO Curl.Request
-buildRequest ClickhouseConnectionSettings {..} CHRequest {..} =
-  case requestExternals of
-    [] -> pure (makeRequest requestBody authAndFormatHeaders)
-    _ -> case requestData of
-      Just _ ->
+buildRequest ClickhouseConnectionSettings {..} request@CHRequest {..} = do
+  typedParams <- either throwIO pure (effectiveRequestQueryParams settings request)
+  case requestData of
+    Just _ -> do
+      unless (null requestExternals) $
         error "external tables cannot be combined with an INSERT payload"
-      Nothing -> do
-        boundary <- mkBoundary
-        let multipartHeaders =
-              authAndFormatHeaders
-                <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
-            payload = multipartBody boundary multipartFields
-        _ <- evaluate (BS.length payload)
-        pure $
-          makeRequest
-            (CurlTypes.Buffer payload)
-            multipartHeaders
+      pure (makeRequest typedParams requestBody authAndFormatHeaders)
+    Nothing
+      | null typedParams && null requestExternals ->
+          pure (makeRequest typedParams requestBody authAndFormatHeaders)
+      | otherwise -> do
+          boundary <- mkBoundary
+          let multipartHeaders =
+                authAndFormatHeaders
+                  <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
+              payload = multipartBody boundary (multipartFields typedParams)
+          _ <- evaluate (BS.length payload)
+          pure (makeRequest typedParams (CurlTypes.Buffer payload) multipartHeaders)
   where
     httpOptions = transportOptions connectionSettings
-    endpoint =
+    endpoint typedParams =
       clickhouseUrl httpOptions
         <> if port httpOptions == 0
           then mempty
           else ":" <> encodeUtf8Show (port httpOptions)
-        <> renderQuery
-          True
-          ( case requestData of
-              Just _ -> ("query", Just requestSql) : map (\(k, v) -> (k, Just v)) requestParams
-              Nothing -> map (\(k, v) -> (k, Just v)) requestParams
-          )
+        <> renderQuery True (urlParams typedParams)
+    -- 'requestParams' (settings and raw extras) always stay in the URL; typed
+    -- parameters only join them when the body cannot carry a multipart form.
+    urlParams typedParams = case requestData of
+      Just _ ->
+        ("query", Just requestSql)
+          : ( map (\(name, value) -> (name, Just value)) requestParams
+                <> map (\(name, value) -> (name, Just value)) typedParams
+            )
+      Nothing -> map (\(name, value) -> (name, Just value)) requestParams
     requestBody = case requestData of
       Just payload -> CurlTypes.Buffer payload
       Nothing
@@ -230,8 +248,8 @@ buildRequest ClickhouseConnectionSettings {..} CHRequest {..} =
       ]
         <> maybe [] (\format -> ["X-ClickHouse-Format: " <> format]) requestResponseFormat
     lowSpeed = lowSpeedLimit httpOptions
-    makeRequest body headers =
-      (Curl.defaultRequest endpoint)
+    makeRequest typedParams body headers =
+      (Curl.defaultRequest (endpoint typedParams))
         { Curl.timeoutMS = responseTimeoutMS httpOptions
         , Curl.connectionTimeoutMS = connectionTimeoutMS httpOptions
         , Curl.lowSpeedLimit =
@@ -243,10 +261,10 @@ buildRequest ClickhouseConnectionSettings {..} CHRequest {..} =
         , Curl.method = CurlTypes.Post
         , Curl.headers = Curl.HeaderList headers
         }
-    multipartFields =
-      [ MultipartField "query" Nothing Nothing requestSql
-      ]
+    multipartFields typedParams =
+      (MultipartField "query" Nothing Nothing requestSql : map typedParamField typedParams)
         <> concatMap externalFields requestExternals
+    typedParamField (name, value) = MultipartField name Nothing Nothing value
     externalFields ExternalTable {..} =
       [ MultipartField (externalTableName <> "_format") Nothing Nothing "RowBinary"
       , MultipartField (externalTableName <> "_structure") Nothing Nothing (renderStructure externalColumns)

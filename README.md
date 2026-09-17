@@ -154,6 +154,56 @@ independently of the supported response-decoder types. Timezones, decimal aliase
 named tuple fields and enum labels remain server-validated; JSON nested in type
 arguments still requires the explicit input setting, even for empty tables.
 
+## Query parameters (escaped text)
+
+`{name:Type}` placeholders bind typed values with `runQueryWithParams` (or
+`sourceQueryWithParams` to stream the rows):
+
+```haskell
+rows <-
+  runQueryWithParams
+    conn
+    [("p", ClickUInt64 41), ("ids", ClickArray (Vector.fromList [ClickUInt64 1, ClickUInt64 2]))]
+    "SELECT {p:UInt64} + arraySum({ids:Array(UInt64)})"
+```
+
+The bindings travel as `param_<name>` values. When the request already is
+`multipart/form-data` (external tables or typed parameters), they are plain text
+fields of that body, in the pinned order: `query`, typed parameters,
+external-table parts (`<name>_format`, `<name>_structure`, RowBinary data).
+Without a multipart body the values are sent as URL parameters, together with
+the ClickHouse settings from `requestParams`.
+
+Values are escaped *text*, not RowBinary: the server parses `{name:Type}` with
+`deserializeTextEscaped`, so raw bytes and file parts named `param_x` are
+rejected (`BAD_QUERY_PARAMETER`). `Conversion.Text.Escaped` renders the same
+type coverage as `RowBinary`, with the literal forms that escaped text needs:
+strings are bare at the top level but single-quoted inside `Array`/`Tuple`/`Map`
+(`['a','b']`, `(1,'x')`, `{'k':1}`), NULL is `\N` at the top level but `NULL`
+inside a container, and `DateTime`/`DateTime64` are written as epoch seconds so
+the value does not depend on the time zone of the placeholder. `Decimal*` and
+`JSON` parameters are rejected with `ClickhouseSettingsException` because their
+escaped-text form cannot be derived from the value alone (the decimal scale and
+the JSON text shape live in the SQL placeholder type); use an external table for
+those.
+
+An INSERT cannot carry a multipart body (its body is the RowBinary payload), so
+an INSERT with typed parameters falls back to `param_<name>` URL parameters
+next to the `query` parameter. The parameter values themselves are still
+escaped text:
+
+```haskell
+let statement =
+      "INSERT INTO t (n, tag) SELECT {add:UInt64} + length(tag) - 1 AS n, tag"
+        <> " FROM input('tag String') FORMAT RowBinary"
+    payload = encodeRowsWithSettings [] (map (Vector.singleton . ClickString) ["x", "yy"])
+    request = (insertRequest statement payload){requestQueryParams = [("add", ClickUInt64 40)]}
+runResourceT (runConduit (sendSource conn request .| sinkNull))
+```
+
+For large collections prefer the external-table API above: a parameter value is
+a single text field, while an external table is streamed as RowBinary.
+
 ## hcurl agent
 
 The transport never creates an agent implicitly.  The caller owns it and
@@ -193,7 +243,10 @@ the streaming behaviour against a live server: a large SELECT folded without
 materialising the result, rows arriving before the response completes, early
 termination cancelling the transfer while the agent stays usable, transport
 truncation and server errors, plus INSERT and external-table round trips. It
-reads the same `CH_*` variables and reports a skip when `CH_URL` is unset.
+also binds typed query parameters (scalars, an escaped string, arrays, and a
+multipart body that carries parameters *and* an external table at the same
+time). It reads the same `CH_*` variables and reports a skip when `CH_URL` is
+unset.
 
 Those checks are read-only by default. The INSERT round trips require
 `CH_INTEGRATION_ALLOW_WRITES=1`; when enabled they create and drop

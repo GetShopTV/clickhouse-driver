@@ -26,6 +26,7 @@ module Database.ClickHouse
   ( -- * Re-exports
     module Database.Clickhouse.Client.Types
   , module Database.Clickhouse.Client.HTTP.Types
+  , module Database.Clickhouse.Conversion.Text.Escaped
   , module Database.Clickhouse.Conversion.ToClickhouse
   , ClientHTTP
   , ClickhouseHTTPTransport (..)
@@ -34,9 +35,11 @@ module Database.ClickHouse
   , connectHTTP
     -- * Queries
   , sourceQuery
+  , sourceQueryWithParams
   , sourceRequest
   , sourceQueryWithExternals
   , runQuery
+  , runQueryWithParams
   , runQueryWithExternals
   , runInsert
   , runCommand
@@ -62,6 +65,7 @@ import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
 import Database.Clickhouse.Conversion.Binary.Decode (decodeRowBinaryCWithSettings)
 import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
+import Database.Clickhouse.Conversion.Text.Escaped
 import Database.Clickhouse.Conversion.ToClickhouse
 import Database.Clickhouse.Conversion.Types (renderInsertStatement)
 import UnliftIO (MonadUnliftIO)
@@ -91,6 +95,22 @@ sourceQuery ::
   ConduitT () (Vector ClickhouseType) m ()
 sourceQuery conn sql = sourceRequest conn (selectRequest sql)
 
+-- | Stream the rows of a SELECT that binds typed @{name:Type}@ query
+-- parameters, e.g. @sourceQueryWithParams conn [(\"p\", ClickUInt64 41)] \"SELECT {p:UInt64} + 1\"@.
+--
+-- Values travel as escaped text (@param_<name>@ multipart fields, or URL
+-- parameters when the request body carries an INSERT payload); unrenderable
+-- values fail with 'ClickhouseSettingsException' before the request is sent.
+-- See "Database.Clickhouse.Conversion.Text.Escaped".
+sourceQueryWithParams ::
+  (ClickhouseClient client, MonadResource m, MonadUnliftIO m) =>
+  ClickhouseConnectionSettings client ->
+  [(ByteString, ClickhouseType)] ->
+  ByteString ->
+  ConduitT () (Vector ClickhouseType) m ()
+sourceQueryWithParams conn params sql =
+  sourceRequest conn (selectRequestWithParams params sql)
+
 sourceRequest ::
   (ClickhouseClient client, MonadResource m, MonadUnliftIO m) =>
   ClickhouseConnectionSettings client ->
@@ -119,6 +139,17 @@ runQuery ::
 runQuery settings sql =
   Vector.fromList
     <$> runResourceT (runConduit (sourceQuery settings sql .| sinkList))
+
+-- | Run a query with typed @{name:Type}@ bindings attached and collect every
+-- row.
+runQueryWithParams ::
+  ClickhouseConnectionSettings ClientHTTP ->
+  [(ByteString, ClickhouseType)] ->
+  ByteString ->
+  IO (Vector (Vector ClickhouseType))
+runQueryWithParams settings params sql =
+  Vector.fromList
+    <$> runResourceT (runConduit (sourceQueryWithParams settings params sql .| sinkList))
 
 -- | Run a query with external tables attached and collect every row.
 runQueryWithExternals ::
