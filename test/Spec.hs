@@ -25,8 +25,8 @@ import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 import Data.UUID (fromWords64)
 import Data.Vector qualified as Vector
 import Database.Clickhouse.Client.Types
-  ( CHRequest (..), ClickhouseDecodeException (..), ClickhouseType (..), ClickhouseSettingsException (..)
-  , commandRequest, defaultConnection, effectiveRequestParams, externalSelectRequest, externalTable
+  ( CHRequest (..), ClickhouseConnectionSettings (..), ClickhouseDecodeException (..), ClickhouseType (..), ClickhouseSettingsException (..)
+  , commandRequest, defaultConnection, effectiveExtraHeaders, effectiveRequestParams, externalSelectRequest, externalTable
   , insertRequest, selectRequest, selectRequestWithParams, settingEnabled
   )
 import Database.Clickhouse.Client.HTTP.Client (buildRequest, newHTTPTransport)
@@ -314,6 +314,34 @@ queryParamChecks =
           "no multipart body"
           False
           (any ("multipart/form-data" `BS.isInfixOf`) (requestHeaders built))
+  , checkIO "connection extra headers travel with every request" $ do
+      transport <- newHTTPTransport defaultHTTPSettings
+      let conn =
+            (defaultConnection transport)
+              { extraHeaders = [("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"), ("x-request-id", "req-1")]
+              }
+      plain <- buildRequest conn (selectRequest "SELECT 1")
+      multipart <- buildRequest conn (selectRequestWithParams [("p", ClickUInt64 1)] "SELECT {p:UInt64}")
+      pure $ do
+        assertEq
+          "traceparent on a plain request"
+          True
+          ("traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" `elem` requestHeaders plain)
+        assertEq "x-request-id on a plain request" True ("x-request-id: req-1" `elem` requestHeaders plain)
+        assertEq
+          "traceparent on a multipart request"
+          True
+          ("traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" `elem` requestHeaders multipart)
+        assertEq "auth headers are kept" True ("X-ClickHouse-User: default" `elem` requestHeaders multipart)
+  , check "extra headers that could break the header block are rejected" $ do
+      expectBindingError
+        "CRLF in a value"
+        "value contains CR or LF"
+        (effectiveExtraHeaders [("traceparent", "00-aa\r\nX-ClickHouse-User: root")])
+      expectBindingError
+        "colon in a name"
+        "name contains CR, LF or a colon"
+        (effectiveExtraHeaders [("tr:ace", "v")])
   , checkIO "unrenderable typed parameters fail before the request is built" $ do
       transport <- newHTTPTransport defaultHTTPSettings
       outcome <-

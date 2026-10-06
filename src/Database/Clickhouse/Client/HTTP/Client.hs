@@ -198,23 +198,27 @@ buildHCurlRequest conn request = do
 -- an INSERT request fall back to @param_<name>@ URL parameters (the SQL is
 -- already sent as the URL @query@ parameter there).
 --
+-- The connection's 'extraHeaders' are appended to the auth headers of every
+-- request.
+--
 -- Exported for tests, which pin the wire shape without a live server; the
 -- transport itself is the only production caller.
 buildRequest :: ClickhouseConnectionSettings ClientHTTP -> CHRequest -> IO Curl.Request
 buildRequest ClickhouseConnectionSettings {..} request@CHRequest {..} = do
   typedParams <- either throwIO pure (effectiveRequestQueryParams settings request)
+  baseHeaders <- either throwIO pure ((authAndFormatHeaders <>) <$> effectiveExtraHeaders extraHeaders)
   case requestData of
     Just _ -> do
       unless (null requestExternals) $
         error "external tables cannot be combined with an INSERT payload"
-      pure (makeRequest typedParams requestBody authAndFormatHeaders)
+      pure (makeRequest typedParams requestBody baseHeaders)
     Nothing
       | null typedParams && null requestExternals ->
-          pure (makeRequest typedParams requestBody authAndFormatHeaders)
+          pure (makeRequest typedParams requestBody baseHeaders)
       | otherwise -> do
           boundary <- mkBoundary
           let multipartHeaders =
-                authAndFormatHeaders
+                baseHeaders
                   <> ["Content-Type: multipart/form-data; boundary=" <> boundary]
               payload = multipartBody boundary (multipartFields typedParams)
           _ <- evaluate (BS.length payload)

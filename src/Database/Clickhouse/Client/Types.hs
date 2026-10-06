@@ -23,6 +23,7 @@ module Database.Clickhouse.Client.Types
   , insertRequest
   , commandRequest
   , effectiveRequestParams
+  , effectiveExtraHeaders
   , settingEnabled
   , ExternalTable (..)
   , externalTable
@@ -41,6 +42,7 @@ import Control.Monad.Trans.Resource (MonadResource)
 import Data.Aeson (Value)
 import Data.Conduit (ConduitT)
 import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BSC
 import Data.Char (toLower)
 import Data.Int (Int16, Int32, Int64, Int8)
@@ -63,6 +65,9 @@ data ClickhouseConnectionSettings client = ClickhouseConnectionSettings
   , password :: !Text
   , database :: !Text
   , settings :: ![(String, ClickhouseType)]
+  , -- | Extra HTTP headers sent with every request of this connection
+    -- (request tracing: @traceparent@, @x-request-id@, ...).
+    extraHeaders :: ![(ByteString, ByteString)]
   , connectionSettings :: !(ClickhouseClientSettings client)
   }
 
@@ -75,6 +80,7 @@ defaultConnection transportSettings =
     , password = ""
     , database = "default"
     , settings = []
+    , extraHeaders = []
     , connectionSettings = transportSettings
     }
 
@@ -215,6 +221,23 @@ effectiveRequestParams :: [(String, ClickhouseType)] -> CHRequest -> Either Clic
 effectiveRequestParams values request = do
   rendered <- mapM renderSetting values
   pure (nubBy (\left right -> fst left == fst right) (requestParams request <> rendered))
+
+{- | Render 'extraHeaders' into @Name: value@ header lines.
+
+A name or value that could break out of its header line (CR, LF, or a colon
+in the name) is rejected, so caller supplied values - incoming request
+tracing headers, for instance - cannot inject headers of their own.
+-}
+effectiveExtraHeaders :: [(ByteString, ByteString)] -> Either ClickhouseSettingsException [ByteString]
+effectiveExtraHeaders = traverse renderHeader
+ where
+  renderHeader (name, value)
+    | BS.null name = Left (invalid name "name is empty")
+    | BSC.any (`elem` ("\r\n:" :: String)) name = Left (invalid name "name contains CR, LF or a colon")
+    | BSC.any (`elem` ("\r\n" :: String)) value = Left (invalid name "value contains CR or LF")
+    | otherwise = Right (name <> ": " <> value)
+  invalid name reason =
+    ClickhouseSettingsException ("Extra header " <> show (BSC.unpack name) <> ": " <> reason)
 
 renderSetting :: (String, ClickhouseType) -> Either ClickhouseSettingsException (ByteString, ByteString)
 renderSetting (name, value)
