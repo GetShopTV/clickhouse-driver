@@ -63,6 +63,7 @@ import System.Timeout (timeout)
 
 main :: IO ()
 main = do
+  args <- getArgs
   mUrl <- lookupEnv "CH_URL"
   case mUrl of
     Nothing ->
@@ -75,13 +76,16 @@ main = do
       password <- maybe "" id <$> lookupEnv "CH_PASSWORD"
       allowWrites <- (== Just "1") <$> lookupEnv "CH_INTEGRATION_ALLOW_WRITES"
       let chPort = maybe 8123 read rawPort
+      let options =
+            defaultHTTPSettings
+              { clickhouseUrl = BSC.pack url
+              , port = chPort
+              , connectionTimeoutMS = 5000
+              }
       base <-
-        connectHTTP
-          defaultHTTPSettings
-            { clickhouseUrl = BSC.pack url
-            , port = chPort
-            , connectionTimeoutMS = 5000
-            }
+        if "--http-identity" `elem` args
+          then connectHTTPWith options defaultHTTPConfig {httpExtraOptions = [OptionAcceptEncoding "identity"]}
+          else connectHTTP options
       let conn =
             base
               { username = Text.pack user
@@ -119,9 +123,8 @@ main = do
         putStrLn
           "integration: DDL/DML checks are skipped unless CH_INTEGRATION_ALLOW_WRITES=1 \
           \and the target database is disposable"
-      args <- getArgs
       readonlyUser <- lookupEnv "CH_READONLY_USER"
-      let selected = if args == ["--settings-only"] then [] else checks conn allowWrites
+      let selected = if "--settings-only" `elem` args then [] else checks conn allowWrites
       results <- runAll (settingsChecks conn readonlyUser <> selected)
       let failures = [name | (name, Left _) <- results]
       forM_ results $ \case

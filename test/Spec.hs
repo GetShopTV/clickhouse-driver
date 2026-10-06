@@ -54,6 +54,8 @@ import Database.Clickhouse.Conversion.Types
   )
 import HCurl.Request qualified as Curl
 import HCurl.Types qualified as CurlTypes
+import HTTPMetricsSpec (httpMetricsChecks)
+import HTTPControlSpec (httpControlChecks)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import System.Timeout (timeout)
@@ -85,6 +87,8 @@ assertEq label expected actual =
 
 checks :: [Check]
 checks =
+  httpControlChecks <>
+  httpMetricsChecks <>
   settingsChecks <>
   queryParamChecks <>
   [ check "type names parse to the expected schema" $ do

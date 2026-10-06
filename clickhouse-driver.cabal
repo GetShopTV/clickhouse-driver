@@ -17,6 +17,7 @@ common warnings
 library
   import:           warnings
   hs-source-dirs:   src
+  other-modules:    Database.Clickhouse.Client.HTTP.Diagnostics
   exposed-modules:
       Database.ClickHouse
       Database.Clickhouse.Client.HTTP.Client
@@ -65,6 +66,9 @@ test-suite clickhouse-driver-test
   import:           warnings
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
+  other-modules:
+      HTTPMetricsSpec
+      HTTPControlSpec
   hs-source-dirs:   test
   ghc-options:      -threaded
   build-depends:
@@ -74,6 +78,7 @@ test-suite clickhouse-driver-test
     , clickhouse-driver
     , conduit
     , hcurl
+    , network
     , resourcet
     , time
     , uuid

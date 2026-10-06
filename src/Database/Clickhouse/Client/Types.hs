@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
 
@@ -31,8 +32,9 @@ module Database.Clickhouse.Client.Types
     -- * Values
   , ClickhouseType (..)
     -- * Exceptions
-  , ClickhouseTransportException (..)
-  , ClickhouseServerException (..)
+  , ClickhouseTransferMetrics (..)
+  , ClickhouseTransportException (ClickhouseTransportException, transportMessage, transportMetrics)
+  , ClickhouseServerException (ClickhouseServerException, serverStatus, serverMessage, serverMetrics)
   , ClickhouseDecodeException (..)
   , ClickhouseSettingsException (..)
   ) where
@@ -57,6 +59,7 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import Data.WideWord (Int128, Int256, Word128, Word256)
 import Database.Clickhouse.Conversion.Types (defaultResponseFormat)
 import Data.Acquire (Acquire)
+import HCurl.Metrics qualified as Curl
 import UnliftIO (MonadUnliftIO)
 
 -- | Connection parameters shared by every transport implementation.
@@ -323,21 +326,62 @@ data ClickhouseType
   | ClickMap !(Vector (ClickhouseType, ClickhouseType))
   deriving stock (Show, Eq)
 
--- | A libcurl-level failure (connection refused, timeout, truncated body).
-newtype ClickhouseTransportException = ClickhouseTransportException
-  { transportMessage :: String
+data ClickhouseTransferMetrics = ClickhouseTransferMetrics
+  { requestBodyBytes :: !Int64
+  , responseStatus :: !(Maybe Int)
+  , transferCode :: !String
+  , curlMetrics :: !Curl.Metrics
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
+
+-- | A libcurl-level failure (connection refused, timeout, truncated body).
+data ClickhouseTransportException = ClickhouseTransportExceptionDetails
+  { transportMessageValue :: String
+  , transportMetrics :: !(Maybe ClickhouseTransferMetrics)
+  }
+
+pattern ClickhouseTransportException :: String -> ClickhouseTransportException
+pattern ClickhouseTransportException {transportMessage} <- ClickhouseTransportExceptionDetails transportMessage _
+  where
+    ClickhouseTransportException message = ClickhouseTransportExceptionDetails message Nothing
+
+{-# COMPLETE ClickhouseTransportException #-}
+
+instance Show ClickhouseTransportException where
+  showsPrec precedence exception =
+    showParen (precedence > 10) $
+      showString "ClickhouseTransportException {transportMessage = "
+        . shows (transportMessageValue exception)
+        . maybe id (\metrics -> showString ", transportMetrics = " . shows (Just metrics)) (transportMetrics exception)
+        . showString "}"
 
 instance Exception ClickhouseTransportException
 
--- | ClickHouse answered with an HTTP error status; the body carries its
--- human-readable error text.
-data ClickhouseServerException = ClickhouseServerException
-  { serverStatus :: !Int
-  , serverMessage :: !ByteString
+{- | ClickHouse answered with an HTTP error status; the body carries its
+human-readable error text.
+-}
+data ClickhouseServerException = ClickhouseServerExceptionDetails
+  { serverStatusValue :: !Int
+  , serverMessageValue :: !ByteString
+  , serverMetrics :: !(Maybe ClickhouseTransferMetrics)
   }
-  deriving stock (Show)
+
+pattern ClickhouseServerException :: Int -> ByteString -> ClickhouseServerException
+pattern ClickhouseServerException {serverStatus, serverMessage} <- ClickhouseServerExceptionDetails serverStatus serverMessage _
+  where
+    ClickhouseServerException status message = ClickhouseServerExceptionDetails status message Nothing
+
+{-# COMPLETE ClickhouseServerException #-}
+
+instance Show ClickhouseServerException where
+  showsPrec precedence exception =
+    showParen (precedence > 10) $
+      showString "ClickhouseServerException {serverStatus = "
+        . shows (serverStatusValue exception)
+        . showString ", serverMessage = "
+        . shows (serverMessageValue exception)
+        . maybe id (\metrics -> showString ", serverMetrics = " . shows (Just metrics)) (serverMetrics exception)
+        . showString "}"
 
 instance Exception ClickhouseServerException
 

@@ -32,7 +32,11 @@ module Database.ClickHouse
   , ClickhouseHTTPTransport (..)
   , newManagedAgent
   , newHTTPTransport
+  , newHTTPTransportWith
+  , withHTTPConfig
+  , transportConfig
   , connectHTTP
+  , connectHTTPWith
     -- * Queries
   , sourceQuery
   , sourceQueryWithParams
@@ -60,6 +64,9 @@ import Database.Clickhouse.Client.HTTP.Client
   , ClickhouseHTTPTransport (..)
   , newManagedAgent
   , newHTTPTransport
+  , newHTTPTransportWith
+  , withHTTPConfig
+  , transportConfig
   )
 import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
@@ -82,6 +89,13 @@ connectHTTP ::
 connectHTTP options = do
   transport <- newHTTPTransport options
   pure (defaultConnection transport)
+
+-- | Open a managed connection with optional HTTP policy and application hooks.
+connectHTTPWith ::
+  ClickhouseHTTPSettings ->
+  ClickhouseHTTPConfig ->
+  IO (ClickhouseConnectionSettings ClientHTTP)
+connectHTTPWith options config = defaultConnection <$> newHTTPTransportWith options config
 
 -- | Stream the rows of a SELECT (or any query) as they arrive.
 --

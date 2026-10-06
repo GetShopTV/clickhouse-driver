@@ -30,15 +30,18 @@ Error reporting:
 -}
 module Database.Clickhouse.Client.HTTP.Client
   ( ClientHTTP
-  , ClickhouseHTTPTransport (..)
+  , ClickhouseHTTPTransport (ClickhouseHTTPTransport, transportOptions, transportAgent)
+  , transportConfig
+  , withHTTPConfig
   , newManagedAgent
   , newHTTPTransport
+  , newHTTPTransportWith
   , buildRequest
   ) where
 
 import Control.Concurrent.MVar (MVar, newMVar, tryTakeMVar)
-import Control.Exception (evaluate, throwIO)
-import Control.Monad (unless)
+import Control.Exception (SomeAsyncException, SomeException, catch, evaluate, fromException, onException, throwIO)
+import Control.Monad (unless, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Resource (MonadResource)
@@ -49,8 +52,10 @@ import Data.ByteString.Lazy qualified as BSL
 import Data.Conduit (ConduitT, yield)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TE
+import Data.UUID.V4 (nextRandom)
 import Data.Vector qualified as Vector
-import Database.Clickhouse.Client.HTTP.Types (ClickhouseHTTPSettings (..))
+import Database.Clickhouse.Client.HTTP.Diagnostics (httpStreamingWithMetrics)
+import Database.Clickhouse.Client.HTTP.Types
 import Database.Clickhouse.Client.Types
 import Database.Clickhouse.Conversion.Binary.Encode (encodeRowsWithSettings)
 import Database.Clickhouse.Conversion.Text.Escaped (effectiveRequestQueryParams)
@@ -73,10 +78,27 @@ data ClientHTTP
 
 -- | Transport settings of 'ClientHTTP': pure connection knobs plus the
 -- user-owned hcurl agent every request is sent through.
-data ClickhouseHTTPTransport = ClickhouseHTTPTransport
-  { transportOptions :: !ClickhouseHTTPSettings
-  , transportAgent :: !Agent
-  }
+data ClickhouseHTTPTransport
+  = ClickhouseHTTPTransport
+      { transportOptions :: !ClickhouseHTTPSettings
+      , transportAgent :: !Agent
+      }
+  | ConfiguredHTTPTransport
+      { transportOptions :: !ClickhouseHTTPSettings
+      , transportAgent :: !Agent
+      , configuredHTTPConfig :: !ClickhouseHTTPConfig
+      }
+
+-- | Read optional HTTP policy; legacy transports use 'defaultHTTPConfig'.
+transportConfig :: ClickhouseHTTPTransport -> ClickhouseHTTPConfig
+transportConfig ClickhouseHTTPTransport {} = defaultHTTPConfig
+transportConfig ConfiguredHTTPTransport {configuredHTTPConfig = config} = config
+
+-- | Configure an existing transport without replacing or taking ownership
+-- of its agent. Record updates of connection options preserve this config.
+withHTTPConfig :: ClickhouseHTTPConfig -> ClickhouseHTTPTransport -> ClickhouseHTTPTransport
+withHTTPConfig config transport =
+  ConfiguredHTTPTransport (transportOptions transport) (transportAgent transport) config
 
 instance ClickhouseClient ClientHTTP where
   type ClickhouseClientSettings ClientHTTP = ClickhouseHTTPTransport
@@ -110,66 +132,112 @@ newHTTPTransport options = do
   agent <- newManagedAgent
   pure $ ClickhouseHTTPTransport {transportOptions = options, transportAgent = agent}
 
+-- | Create a managed transport with application-owned HTTP policy and hooks.
+newHTTPTransportWith :: ClickhouseHTTPSettings -> ClickhouseHTTPConfig -> IO ClickhouseHTTPTransport
+newHTTPTransportWith options config = withHTTPConfig config <$> newHTTPTransport options
+
 sendSourceHTTP ::
   (MonadResource m, MonadUnliftIO m) =>
   ClickhouseConnectionSettings ClientHTTP ->
   CHRequest ->
   ConduitT i ByteString m ()
 sendSourceHTTP settings request = do
-  let ClickhouseHTTPTransport {transportOptions = _, transportAgent = agent} =
-        connectionSettings settings
+  let transport = connectionSettings settings
+      config = transportConfig transport
+      agent = transportAgent transport
+  liftIO $ when (httpErrorBodyLimit config < 0) $ throwIO $ ClickhouseSettingsException "httpErrorBodyLimit must be nonnegative"
   httpRequest <- liftIO (buildHCurlRequest settings request)
-  outcome <-
-    lift $ CurlStream.httpStreaming agent httpRequest
+  identifier <- liftIO nextRandom
+  let bodyBytes = case Curl.body httpRequest of
+        CurlTypes.Buffer bytes -> fromIntegral (BS.length bytes)
+        CurlTypes.Empty -> 0
+      onStarted = notifyHTTPEvent config (HTTPRequestStarted identifier bodyBytes)
+      onFinished cancelled metrics =
+        notifyHTTPEvent config $ HTTPRequestFinished identifier (outcomeFor cancelled metrics) metrics
+      outcomeFor cancelled metrics
+        | cancelled = HTTPTransferCancelled
+        | transferCode metrics /= show CurlTypes.Ok = HTTPTransportFailed
+        | maybe False (httpIsErrorStatus config) (responseStatus metrics) = HTTPResponseFailed
+        | otherwise = HTTPTransferSucceeded
+  (outcome, getMetrics) <-
+    lift $ httpStreamingWithMetrics (httpStreamConfig config) onStarted onFinished agent httpRequest
   case outcome of
-    Left code -> liftIO $ throwIO $ ClickhouseTransportException (show code)
-    Right StreamingResponse {info = HttpParts {statusCode}, body = reader, completion} ->
-      if statusCode >= 400
-        then liftIO $ failWithServerError statusCode reader completion
-        else streamResponseBody reader completion
+    Left code -> liftIO $ failWithTransportError code getMetrics
+    Right StreamingResponse {info = responseHead@HttpParts {statusCode}, body = reader, completion} -> do
+      isError <- liftIO $
+        (do
+          notifyHTTPEvent config (HTTPResponseReceived identifier statusCode)
+          httpOnResponse config request responseHead
+          evaluate (httpIsErrorStatus config statusCode)
+        ) `onException` CurlStream.closeBody reader
+      if isError
+        then liftIO $ failWithServerError (httpErrorBodyLimit config) statusCode reader completion getMetrics
+        else streamResponseBody reader completion getMetrics
+
+notifyHTTPEvent :: ClickhouseHTTPConfig -> ClickhouseHTTPEvent -> IO ()
+notifyHTTPEvent config event = httpOnEvent config event `catch` handleLoggerError
+ where
+  handleLoggerError :: SomeException -> IO ()
+  handleLoggerError exception = case fromException exception :: Maybe SomeAsyncException of
+    Just _ -> throwIO exception
+    Nothing -> pure ()
 
 -- | Drain the error body, wait for the transfer to finish and throw.
 failWithServerError ::
   Int ->
+  Int ->
   CurlStream.BodyReader ->
   IO (Either e a) ->
+  IO ClickhouseTransferMetrics ->
   IO r
-failWithServerError status reader completion = do
-  body <- drainBody reader
+failWithServerError limit status reader completion getMetrics = do
+  body <- drainBody limit reader getMetrics
   _ <- completion
+  metrics <- getMetrics
   throwIO $
-    ClickhouseServerException
-      { serverStatus = status
-      , serverMessage = BS.take 4096 body
+    ( ClickhouseServerException
+        { serverStatus = status
+        , serverMessage = body
+        }
+    )
+      { serverMetrics = Just metrics
       }
+
+failWithTransportError :: (Show code) => code -> IO ClickhouseTransferMetrics -> IO result
+failWithTransportError code getMetrics = do
+  metrics <- getMetrics
+  throwIO $ (ClickhouseTransportException (show code)) {transportMetrics = Just metrics}
 
 streamResponseBody ::
   (MonadIO m, Show e) =>
   CurlStream.BodyReader ->
   IO (Either e a) ->
+  IO ClickhouseTransferMetrics ->
   ConduitT i ByteString m ()
-streamResponseBody reader completion = go
-  where
-    go = do
-      chunk <- liftIO (CurlStream.readBody reader)
-      case chunk of
-        Left code -> liftIO $ throwIO $ ClickhouseTransportException (show code)
-        Right Nothing -> do
-          final <- liftIO completion
-          case final of
-            Left code -> liftIO $ throwIO $ ClickhouseTransportException (show code)
-            Right _ -> pure ()
-        Right (Just bytes) -> yield bytes >> go
+streamResponseBody reader completion getMetrics = go
+ where
+  go = do
+    chunk <- liftIO (CurlStream.readBody reader)
+    case chunk of
+      Left code -> liftIO $ failWithTransportError code getMetrics
+      Right Nothing -> do
+        final <- liftIO completion
+        case final of
+          Left code -> liftIO $ failWithTransportError code getMetrics
+          Right _ -> pure ()
+      Right (Just bytes) -> yield bytes >> go
 
-drainBody :: CurlStream.BodyReader -> IO ByteString
-drainBody reader = go []
-  where
-    go acc = do
-      chunk <- CurlStream.readBody reader
-      case chunk of
-        Left code -> throwIO $ ClickhouseTransportException (show code)
-        Right Nothing -> pure (BS.concat (reverse acc))
-        Right (Just bytes) -> go (bytes : acc)
+drainBody :: Int -> CurlStream.BodyReader -> IO ClickhouseTransferMetrics -> IO ByteString
+drainBody limit reader getMetrics = go limit []
+ where
+  go remaining acc = do
+    chunk <- CurlStream.readBody reader
+    case chunk of
+      Left code -> failWithTransportError code getMetrics
+      Right Nothing -> pure (BS.concat (reverse acc))
+      Right (Just bytes) ->
+        let retained = BS.take remaining bytes
+         in go (remaining - BS.length retained) (if BS.null retained then acc else retained : acc)
 
 buildHCurlRequest ::
   ClickhouseConnectionSettings ClientHTTP ->
@@ -204,7 +272,14 @@ buildHCurlRequest conn request = do
 -- Exported for tests, which pin the wire shape without a live server; the
 -- transport itself is the only production caller.
 buildRequest :: ClickhouseConnectionSettings ClientHTTP -> CHRequest -> IO Curl.Request
-buildRequest ClickhouseConnectionSettings {..} request@CHRequest {..} = do
+buildRequest conn request = do
+  nativeRequest <- buildDefaultRequest conn request
+  let config = transportConfig (connectionSettings conn)
+  httpModifyRequest config request $
+    nativeRequest {Curl.extraOptions = Curl.extraOptions nativeRequest <> httpExtraOptions config}
+
+buildDefaultRequest :: ClickhouseConnectionSettings ClientHTTP -> CHRequest -> IO Curl.Request
+buildDefaultRequest ClickhouseConnectionSettings {..} request@CHRequest {..} = do
   typedParams <- either throwIO pure (effectiveRequestQueryParams settings request)
   baseHeaders <- either throwIO pure ((authAndFormatHeaders <>) <$> effectiveExtraHeaders extraHeaders)
   case requestData of

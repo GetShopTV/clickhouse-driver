@@ -228,6 +228,138 @@ let transport = ClickhouseHTTPTransport defaultHTTPSettings agent
 `initCurl` is required once before any custom agent is used; agents created
 by `newManagedAgent` do that automatically.
 
+## HTTP policy and hooks
+
+`connectHTTP`, `newHTTPTransport`, and the two-field
+`ClickhouseHTTPTransport` constructor retain their original defaults.
+Use `connectHTTPWith` or `newHTTPTransportWith` to supply a separate
+`ClickhouseHTTPConfig` without changing connection credentials or ClickHouse
+settings:
+
+```haskell
+{-# LANGUAGE OverloadedStrings #-}
+
+import Database.ClickHouse
+
+main :: IO ()
+main = do
+  let config = defaultHTTPConfig
+        { httpExtraOptions = [OptionAcceptEncoding "identity"]
+        , httpStreamConfig = StreamConfig { bufferedChunks = 4 }
+        , httpErrorBodyLimit = 4096
+        , httpOnEvent = print
+        }
+  conn <- connectHTTPWith defaultHTTPSettings config
+  rows <- runQuery conn "SELECT number FROM numbers(10)"
+  print rows
+```
+
+`OptionAcceptEncoding "identity"` opts out of HTTP response compression for
+this connection. Compression can delay the first bytes of small streaming
+responses; it is not disabled globally by the driver. Other native hcurl
+options can control HTTP version, timeouts, redirects, TLS and TCP policy.
+Options are applied after native defaults, in order.
+
+The integration harness can exercise this opt-in policy against a local server
+without changing the original streaming assertions:
+`cabal test clickhouse-driver-integration --test-options=--http-identity`.
+
+The extension points are:
+
+* `httpModifyRequest`: receives the effective `CHRequest` and the fully built
+  `HCurl.Request.Request`, including authentication headers and the serialized
+  multipart body. Return a modified native request to change its URL, headers,
+  body, timeouts or options. This also applies to public `buildRequest` calls;
+  higher-level send functions resolve effective ClickHouse settings first.
+* `httpOnResponse`: receives the original `CHRequest` and
+  `HCurl.Response.HttpParts` before the body is consumed. It can inspect response
+  headers or reject a response by throwing an exception.
+* `httpIsErrorStatus`: controls which statuses throw
+  `ClickhouseServerException`; the default is `>= 400`.
+* `httpStreamConfig`: bounds the response queue in chunks. The capacity must
+  be positive; a smaller queue applies backpressure rather than dropping data.
+* `httpErrorBodyLimit`: bounds the retained server-error text. The full body
+  is still drained and counted in metrics. Zero discards all text; negative
+  values are rejected before submission.
+* `httpOnEvent`: a logger/metrics callback for `HTTPRequestStarted`,
+  `HTTPResponseReceived` and `HTTPRequestFinished`. Every submitted transfer
+  has a correlation UUID and one terminal event, even after early termination
+  or asynchronous cancellation. Terminal events contain the completed transfer
+  metrics and distinguish success, HTTP failure, curl failure and cancellation.
+
+Callbacks run synchronously on the request or resource-cleanup thread, never
+on the curl reactor. Slow callbacks delay that thread. Synchronous exceptions
+from `httpOnEvent` are ignored so a broken logger cannot replace a query error;
+asynchronous exceptions still propagate. Exceptions from the request/response
+policy hooks propagate: the request hook fails before submission, and the
+response hook cancels the transfer immediately, even if its exception is caught
+inside a longer-lived resource scope. Hooks can run concurrently for different
+requests, so shared callback state must be thread-safe; use the correlation UUID
+to group each request's events.
+
+Automatic events include no SQL, parameters, credentials, URLs, headers or
+body text. The raw request/response hooks deliberately expose more information;
+sanitize it before logging. A successful transfer event does not guarantee that
+row decoding or downstream application processing succeeded.
+
+For a caller-owned agent or a per-call override, configure the existing
+transport instead of creating another agent:
+
+```haskell
+let configured = conn
+      { connectionSettings = withHTTPConfig config (connectionSettings conn) }
+```
+
+`withHTTPConfig` does not acquire ownership of the agent or change its lifetime.
+Record updates of `transportOptions` and `transportAgent` retain the configured
+hooks. Use these selectors and `transportConfig` to inspect a configured
+transport; the legacy constructor remains available for default transports.
+
+## Error diagnostics
+
+Transport and HTTP-status exceptions raised by the HTTP driver include a
+completed transfer snapshot. Logging the exception with `show` or
+`displayException` includes these metrics automatically; the driver does not
+write to stderr or require a logger.
+
+The typed snapshot is available through `transportMetrics` on
+`ClickhouseTransportException` and `serverMetrics` on
+`ClickhouseServerException`. Both return `Maybe ClickhouseTransferMetrics`;
+the original exception constructors and patterns remain usable, and manually
+constructed legacy exceptions have `Nothing` metrics.
+
+`ClickhouseTransferMetrics` contains:
+
+* `requestBodyBytes`: the complete planned request-body size in bytes, even
+  if connecting or uploading failed.
+* `responseStatus`: the last observed HTTP status, or `Nothing` when no status
+  arrived. This can be an informational status such as `100` if the connection
+  reset before a final response.
+* `transferCode`: the final libcurl result, including errors such as
+  `RecvError`, `PartialFile`, `CouldntConnect`, or `OperationTimedout`.
+* `curlMetrics`: the hcurl snapshot, including `uploadProgress`, `uploadTotal`,
+  `downloadProgress`, `downloadTotal`, upload/download speeds, and DNS,
+  connection, TLS, first-response-byte and total timings.
+
+Sizes are bytes, speeds are bytes per second, and timings are microseconds.
+Streaming `downloadProgress` counts decoded response-body bytes; native download
+totals and speeds can refer to compressed wire bytes, so they need not agree
+when HTTP compression is enabled.
+Timings are cumulative milestones from the beginning of the transfer, not
+individual phase durations. Unknown or unmeasured native values are preserved;
+for example, a refused connection can report `uploadTotal = 0` even though
+`requestBodyBytes` is positive. Uploaded bytes do not prove that ClickHouse
+received or processed the entire query.
+
+The new snapshot does not include SQL, parameters, credentials, URLs, or request
+headers. The existing `serverMessage` still contains the server's response text
+and is not sanitized by this feature.
+
+The unit suite uses loopback TCP servers to exercise resets, partial uploads,
+truncated responses, connection refusal, timeouts and HTTP errors without a
+ClickHouse server. Set `CH_TEST_LOG_METRICS=1` to print the captured exceptions
+when running `cabal test clickhouse-driver-test --test-show-details=direct`.
+
 ## Integration harness
 
 `cabal run exe:clickhouse-driver-example` exercises the driver against a live
