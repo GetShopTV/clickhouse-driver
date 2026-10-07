@@ -2,7 +2,7 @@
 
 Streaming [ClickHouse](https://clickhouse.com) HTTP client for Haskell.
 
-The transport is built on [hcurl](https://github.com/Reykudo/hcurl) (libcurl
+The default transport is built on [hcurl](https://github.com/Reykudo/hcurl) (libcurl
 multi interface) and the wire format is binary:
 
 * INSERT payloads are encoded as `RowBinary`;
@@ -203,6 +203,92 @@ runResourceT (runConduit (sendSource conn request .| sinkNull))
 
 For large collections prefer the external-table API above: a parameter value is
 a single text field, while an external table is streamed as RowBinary.
+
+## Execution policy and custom transports
+
+`ClickhouseExecution` separates transport from whole-operation policy. Obtain
+the stock execution with `defaultExecution conn`, update its fields, and attach
+it with `withExecution execution conn`:
+
+* `executeSource` supplies raw response chunks for a `CHRequest`. Replace it
+  to use another HTTP client or an application-owned transport. Its contract
+  uses shared connection settings, `CHRequest`, and a resource-managed conduit,
+  not hcurl request/response types.
+* `executeRequest` wraps an `IO` action for a fully consumed request, including
+  row decoding and resource cleanup. It can add logging, deadlines or retry
+  without replacing the stock transport. It receives the current connection
+  and request, and is polymorphic in the action's result.
+
+`runRequest`, `runQuery`, `runQueryWithParams`, `runQueryWithExternals`,
+`runInsert` and `runCommand` work with any `ClickhouseClient`. Existing instances
+need no changes: their new `runClientRequest` method defaults to running the
+action once. `defaultExecution` preserves an existing client's wrapper,
+including nested execution records. Updates to shared connection fields after
+`withExecution` reach both the wrapper and the original transport. Native
+transport settings are captured from the connection passed to `defaultExecution`;
+configure HTTP hooks before adapting that connection.
+
+For example, an application can use [retry](https://hackage.haskell.org/package/retry)
+by updating just `executeRequest`. Add `retry` and `exceptions` to the
+application's dependencies; neither is a new dependency of the driver library.
+The application supplies both an explicit idempotency decision and a predicate
+for retryable transport failures:
+
+```haskell
+{-# LANGUAGE RankNTypes #-}
+
+import Control.Monad.Catch (Handler(..))
+import Control.Retry (exponentialBackoff, limitRetries, recovering)
+import Database.ClickHouse
+
+retrying
+  :: (CHRequest -> Bool)
+  -> (ClickhouseTransportException -> IO Bool)
+  -> ClickhouseConnectionSettings ClientHTTP
+  -> ClickhouseConnectionSettings ClientExecution
+retrying mayRetry shouldRetry base =
+  let normal = defaultExecution base
+      policy = exponentialBackoff 50_000 <> limitRetries 2
+      execution = normal
+        { executeRequest = \connection request action ->
+            let once = executeRequest normal connection request action
+            in if mayRetry request
+                 then recovering policy [const (Handler shouldRetry)] (\_ -> once)
+                 else once
+        }
+  in withExecution execution base
+```
+
+Capture `normal` outside the record update and call its field, not the updated
+record's field, to avoid recursion. Each attempt consumes the whole response
+and releases its `ResourceT` resources before the next attempt; a failed
+attempt's partially collected rows are discarded. Native HTTP policy, hooks
+and final transfer metrics still apply separately to every attempt.
+
+Retry is opt-in. A lost response does not prove that ClickHouse did not execute
+the statement: do not automatically retry INSERT, DDL or other non-idempotent
+operations. Do not infer safety from HTTP POST or a SQL prefix; use application
+knowledge about the complete operation. Limit attempts, classify failures,
+propagate asynchronous cancellation and avoid catching `SomeException` as
+retryable. The example retries only matching transport exceptions, not server
+or decode errors. Backoff and attempt limits do not impose an overall deadline;
+apply one outside the retry block if required.
+
+Streaming helpers (`sourceRequest`, `sourceQuery`, `sourceQueryWithParams` and
+`sourceQueryWithExternals`) use `executeSource`, but deliberately bypass
+`executeRequest`: automatically replaying a stream could duplicate rows already
+delivered to a consumer. Wrap a complete consumer operation explicitly only
+when its effects can safely be repeated.
+
+For a custom transport without a `ClickhouseClient` instance, start with
+`executionFromSource applicationSource` and `defaultConnection execution`.
+`applicationSource :: ClickhouseRequestSource` must yield the requested wire
+format (normally `RowBinaryWithNamesAndTypes` for queries), honor effective
+settings, credentials, headers and request payloads, report failures including
+incomplete responses, and release resources on early close or cancellation.
+Its default `executeRequest` runs once. The execution API does not depend on
+hcurl types, although the package still includes and depends on the stock
+hcurl backend.
 
 ## hcurl agent
 

@@ -118,6 +118,13 @@ class ClickhouseClient client where
     Acquire (ConduitT i ByteString m ())
   sendSourceAcquire settings = pure . sendSource settings
 
+  runClientRequest ::
+    ClickhouseConnectionSettings client ->
+    CHRequest ->
+    IO result ->
+    IO result
+  runClientRequest _ _ action = action
+
 -- | A request to the ClickHouse HTTP endpoint.
 data CHRequest = CHRequest
   { -- | SQL statement. Sent as the POST body unless 'requestData' is present,

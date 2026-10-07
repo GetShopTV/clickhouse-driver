@@ -21,6 +21,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BSC
 import Data.Char (toLower, toUpper)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
 import Data.Conduit (ConduitT, await, runConduit, (.|))
 import Data.Conduit.Combinators (sinkList, sinkNull)
@@ -175,6 +176,22 @@ readOnlyChecks conn =
       checkTypedQueryParams conn
   , checkIO "typed query parameters coexist with RowBinary external tables" $
       checkTypedParamsWithExternals conn
+  , checkIO "execution record wraps stock queries and forwards updated settings" $ do
+      calls <- newIORef (0 :: Int)
+      let normal = defaultExecution conn
+          execution = normal
+            { executeRequest = \current request action -> do
+                assertEqIO "wrapper settings" [("max_threads", ClickUInt64 2)] (settings current)
+                assertEqIO "wrapper typed parameters" [("value", ClickUInt64 41)] (requestQueryParams request)
+                atomicModifyIORef' calls (\count -> (count + 1, ()))
+                executeRequest normal current request action
+            }
+          configured = (withExecution execution conn) {settings = [("max_threads", ClickUInt64 2)]}
+      result <- runQueryWithParams configured [("value", ClickUInt64 41)] "SELECT toUInt64(getSetting('max_threads')), {value:UInt64}"
+      assertEqIO "execution query" (rowsVector [[ClickUInt64 2, ClickUInt64 41]]) result
+      streamed <- runResourceT $ runConduit $ sourceQuery configured "SELECT toUInt64(42)" .| sinkList
+      assertEqIO "execution stream" [Vector.singleton (ClickUInt64 42)] streamed
+      readIORef calls >>= assertEqIO "one whole-request wrapper call" 1
   ]
 
 settingsChecks :: ClickhouseConnectionSettings ClientHTTP -> Maybe String -> [Check]

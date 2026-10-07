@@ -54,6 +54,7 @@ import Database.Clickhouse.Conversion.Types
   )
 import HCurl.Request qualified as Curl
 import HCurl.Types qualified as CurlTypes
+import ExecutionSpec (executionChecks)
 import HTTPMetricsSpec (httpMetricsChecks)
 import HTTPControlSpec (httpControlChecks)
 import System.Exit (exitFailure)
@@ -87,6 +88,7 @@ assertEq label expected actual =
 
 checks :: [Check]
 checks =
+  executionChecks <>
   httpControlChecks <>
   httpMetricsChecks <>
   settingsChecks <>

@@ -3,7 +3,7 @@
 {- |
 Streaming ClickHouse driver.
 
-Transport is hcurl (libcurl multi interface); values travel as @RowBinary@
+The default transport is hcurl (libcurl multi interface); values travel as @RowBinary@
 for INSERT and come back as @RowBinaryWithNamesAndTypes@ (the response
 header carries the column names and types, so rows decode into dynamically
 typed 'ClickhouseType' vectors without a client-side schema).
@@ -25,6 +25,7 @@ Minimal example:
 module Database.ClickHouse
   ( -- * Re-exports
     module Database.Clickhouse.Client.Types
+  , module Database.Clickhouse.Client.Execution
   , module Database.Clickhouse.Client.HTTP.Types
   , module Database.Clickhouse.Conversion.Text.Escaped
   , module Database.Clickhouse.Conversion.ToClickhouse
@@ -45,6 +46,7 @@ module Database.ClickHouse
   , runQuery
   , runQueryWithParams
   , runQueryWithExternals
+  , runRequest
   , runInsert
   , runCommand
   ) where
@@ -59,6 +61,7 @@ import Data.Text (Text)
 import Data.Text.Encoding qualified as Text
 import Data.Vector (Vector)
 import Data.Vector qualified as Vector
+import Database.Clickhouse.Client.Execution
 import Database.Clickhouse.Client.HTTP.Client
   ( ClientHTTP
   , ClickhouseHTTPTransport (..)
@@ -147,33 +150,42 @@ sourceQueryWithExternals conn externals sql =
 
 -- | Run a query and collect every row.
 runQuery ::
-  ClickhouseConnectionSettings ClientHTTP ->
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
   ByteString ->
   IO (Vector (Vector ClickhouseType))
-runQuery settings sql =
-  Vector.fromList
-    <$> runResourceT (runConduit (sourceQuery settings sql .| sinkList))
+runQuery connection sql = runRequest connection (selectRequest sql)
 
 -- | Run a query with typed @{name:Type}@ bindings attached and collect every
 -- row.
 runQueryWithParams ::
-  ClickhouseConnectionSettings ClientHTTP ->
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
   [(ByteString, ClickhouseType)] ->
   ByteString ->
   IO (Vector (Vector ClickhouseType))
-runQueryWithParams settings params sql =
-  Vector.fromList
-    <$> runResourceT (runConduit (sourceQueryWithParams settings params sql .| sinkList))
+runQueryWithParams connection params sql =
+  runRequest connection (selectRequestWithParams params sql)
 
 -- | Run a query with external tables attached and collect every row.
 runQueryWithExternals ::
-  ClickhouseConnectionSettings ClientHTTP ->
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
   [ExternalTable] ->
   ByteString ->
   IO (Vector (Vector ClickhouseType))
-runQueryWithExternals settings externals sql =
-  Vector.fromList
-    <$> runResourceT (runConduit (sourceQueryWithExternals settings externals sql .| sinkList))
+runQueryWithExternals connection externals sql =
+  runRequest connection (externalSelectRequest externals sql)
+
+runRequest ::
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
+  CHRequest ->
+  IO (Vector (Vector ClickhouseType))
+runRequest connection request =
+  runClientRequest connection request $
+    Vector.fromList
+      <$> runResourceT (runConduit (sourceRequest connection request .| sinkList))
 
 -- | Insert rows into a table.
 --
@@ -181,7 +193,8 @@ runQueryWithExternals settings externals sql =
 -- are double quoted.  Each row must supply a value for every listed column,
 -- in order.
 runInsert ::
-  ClickhouseConnectionSettings ClientHTTP ->
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
   Text ->
   [Text] ->
   [[ClickhouseType]] ->
@@ -190,15 +203,20 @@ runInsert conn table columns rows = do
   let statement = Text.encodeUtf8 (renderInsertStatement table columns)
   params <- either throwIO pure (effectiveRequestParams (settings conn) (insertRequest statement mempty))
   let payload = encodeRowsWithSettings params (map Vector.fromList rows)
-  runResourceT $
-    runConduit (sendSource conn (insertRequest statement payload) .| sinkNull)
+      request = insertRequest statement payload
+  runClientRequest conn request $
+    runResourceT $
+      runConduit (sendSource conn request .| sinkNull)
 
 -- | Run a statement and discard its output (DDL, INSERT without collecting
 -- the result, SET, ...).  Server side errors still throw.
 runCommand ::
-  ClickhouseConnectionSettings ClientHTTP ->
+  ClickhouseClient client =>
+  ClickhouseConnectionSettings client ->
   ByteString ->
   IO ()
-runCommand settings sql =
-  runResourceT $
-    runConduit (sendSource settings (commandRequest sql) .| sinkNull)
+runCommand connection sql =
+  let request = commandRequest sql
+   in runClientRequest connection request $
+        runResourceT $
+          runConduit (sendSource connection request .| sinkNull)

@@ -15,7 +15,7 @@ import Data.Conduit (catchC, runConduit, (.|))
 import Data.Conduit.Combinators qualified as Conduit
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
-import Database.ClickHouse
+import Database.ClickHouse hiding (runRequest)
 import Database.Clickhouse.Client.HTTP.Client (buildRequest)
 import Database.Clickhouse.Client.HTTP.Client qualified as Legacy (ClickhouseHTTPTransport (..))
 import HCurl.Metrics qualified as CurlMetrics

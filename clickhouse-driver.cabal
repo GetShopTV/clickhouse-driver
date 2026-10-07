@@ -20,6 +20,7 @@ library
   other-modules:    Database.Clickhouse.Client.HTTP.Diagnostics
   exposed-modules:
       Database.ClickHouse
+      Database.Clickhouse.Client.Execution
       Database.Clickhouse.Client.HTTP.Client
       Database.Clickhouse.Client.HTTP.Types
       Database.Clickhouse.Client.Types
@@ -67,6 +68,7 @@ test-suite clickhouse-driver-test
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
   other-modules:
+      ExecutionSpec
       HTTPMetricsSpec
       HTTPControlSpec
   hs-source-dirs:   test
@@ -77,10 +79,13 @@ test-suite clickhouse-driver-test
     , bytestring
     , clickhouse-driver
     , conduit
+    , exceptions
     , hcurl
     , network
     , resourcet
+    , retry
     , time
+    , transformers
     , uuid
     , vector
   default-language: GHC2021

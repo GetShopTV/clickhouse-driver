@@ -26,7 +26,7 @@ import Data.Conduit (runConduit, (.|))
 import Data.Conduit.Combinators (sinkNull)
 import Data.Conduit.Combinators qualified as Conduit
 import Data.List (isInfixOf)
-import Database.ClickHouse
+import Database.ClickHouse hiding (runRequest)
 import Database.Clickhouse.Client.Types qualified as Legacy (ClickhouseServerException (..), ClickhouseTransportException (..))
 import HCurl.Agent qualified as CurlAgent
 import HCurl.Metrics qualified as Curl
